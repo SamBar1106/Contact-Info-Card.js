@@ -658,7 +658,6 @@
         };
       });
 
-      // Bind PiP edit links directly to opener window
       listContainer.querySelectorAll('a[href]').forEach(a => {
         a.onclick = (e) => {
           e.stopPropagation();
@@ -1009,7 +1008,7 @@
       return false;
     }
 
-    /* Column-Aware Attendance Parsing with Edit URL Extraction */
+    /* Isolated Event Attendance Parsing: Strictly Targets Event Sublist & Rejects Phantom Directory Rows */
     async function getAllAttendance(clientId) {
       if (cache.eventAttendance.has(clientId)) return cache.eventAttendance.get(clientId);
       const res = await fetch(`/app/common/entity/custjob.nl?id=${clientId}&selectedtab=custom26`);
@@ -1045,10 +1044,17 @@
 
       const results = [];
       allDocs.forEach(d => {
-        d.querySelectorAll('table').forEach(tbl => {
-          if (tbl.id && /usernotes|messages|activities|media/i.test(tbl.id)) return;
+        // Prioritize the actual event attendance sublist; avoid general directory contacts tables
+        let candidateTables = Array.from(d.querySelectorAll('table[id*="mge_event_client"], table[data-machine="recmachcustrecord_mge_event_client"]'));
+        if (!candidateTables.length) {
+          candidateTables = Array.from(d.querySelectorAll('table')).filter(tbl => {
+            const tid = (tbl.id || '').toLowerCase();
+            return !/usernotes|messages|activities|media|contacts__splits|address|calls|tasks/i.test(tid);
+          });
+        }
 
-          let colMap = { status: -1, date: -1, title: -1 };
+        candidateTables.forEach(tbl => {
+          let colMap = { status: -1, date: -1, title: -1, pos: -1 };
           const headerRow = tbl.querySelector('tr.uir-list-header-tr, tr[id*="header"], tr:has(th), tr:has(td.listheadertd)');
           if (headerRow) {
             Array.from(headerRow.children).forEach((cell, idx) => {
@@ -1056,6 +1062,7 @@
               if (hTxt.includes('status')) colMap.status = idx;
               else if (hTxt.includes('date')) colMap.date = idx;
               else if (hTxt.includes('event') || hTxt.includes('seminar') || hTxt.includes('title') || hTxt.includes('course')) colMap.title = idx;
+              else if (hTxt.includes('position') || hTxt.includes('job') || hTxt.includes('post')) colMap.pos = idx;
             });
           }
 
@@ -1067,7 +1074,6 @@
             const contactId = cLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] || '';
             if (!contactName) return;
 
-            // Extract connected NetSuite Edit URL from row
             let rowEditUrl = '';
             const editA = Array.from(row.querySelectorAll('a')).find(a => {
               const t = (a.innerText || a.textContent || '').trim().toLowerCase();
@@ -1087,7 +1093,11 @@
             let attendanceStatus = '';
             let attendanceDate = '';
             let seminarTitle = '';
+            let positionText = '';
 
+            if (colMap.pos !== -1 && cells[colMap.pos]) {
+              positionText = (cells[colMap.pos].innerText || cells[colMap.pos].textContent || '').replace(/\s+/g, ' ').trim();
+            }
             if (colMap.status !== -1 && cells[colMap.status]) {
               const sTxt = (cells[colMap.status].innerText || cells[colMap.status].textContent || '').replace(/\s+/g, ' ').trim();
               if (!/^(edit|view)$/i.test(sTxt)) attendanceStatus = sTxt;
@@ -1109,16 +1119,18 @@
                 attendanceDate = text;
               } else if (!attendanceStatus && /\b(scheduled|rescheduled|re-scheduled|resched|attended|confirmed|cancell?ed|no[-\s]?show|noshow|ns|registered|enrolled|waitlist(ed)?|wait[-\s]?list|completed|invited|declined|tentative|pending|standby|present|did not attend|absent)\b/i.test(text)) {
                 attendanceStatus = text;
-              } else if (!seminarTitle && text.length > 3) {
-                const isStatusWord = /\b(scheduled|rescheduled|confirmed|cancell?ed|no[-\s]?show|attended|completed|waitlist)\b/i.test(text);
-                if (!isStatusWord && !/^\d+$/.test(text)) {
+              } else if (!seminarTitle && text.length > 4) {
+                const isStatusWord = /\b(scheduled|rescheduled|confirmed|cancell?ed|no[-\s]?show|attended|completed|waitlist|registered)\b/i.test(text);
+                const isJobTitle = positionText && text.toLowerCase() === positionText.toLowerCase();
+                if (!isStatusWord && !isJobTitle && !/^\d+$/.test(text)) {
                   seminarTitle = text;
                 }
               }
             });
 
-            if (seminarTitle || attendanceDate || attendanceStatus || rowEditUrl) {
-              const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}_${attendanceStatus}`;
+            // Guard against phantom rows: Real seminar records MUST have an attendance date
+            if (attendanceDate && (seminarTitle || attendanceStatus || rowEditUrl)) {
+              const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}`;
               if (!results.some(r => r.compoundKey === compoundKey)) {
                 results.push({ 
                   contactName, 
@@ -1127,6 +1139,7 @@
                   date: attendanceDate, 
                   status: attendanceStatus || 'Scheduled', 
                   editUrl: rowEditUrl,
+                  position: positionText,
                   compoundKey 
                 });
               }
@@ -1277,12 +1290,21 @@
           getAllAttendance(clientInternalId).then(allAttendance => {
             const openBoardInfo = getOpenBoardDateInfo();
 
-            const matches = allAttendance.filter(item => {
+            const rawMatches = allAttendance.filter(item => {
               const isThisContact = (contactId && item.contactId === contactId) ||
                 (attendee.attendeeName && item.contactName.toLowerCase().includes(attendee.attendeeName.toLowerCase()));
               if (!isThisContact) return false;
               if (item.status && /cancel/i.test(item.status)) return false;
               return isEventInOpenWeeks(item, openBoardInfo);
+            });
+
+            // Ensure unique seminar entries by title and date
+            const matches = [];
+            rawMatches.forEach(m => {
+              const k = `${m.contactName}_${m.eventTitle}_${m.date}`;
+              if (!matches.some(x => `${x.contactName}_${x.eventTitle}_${x.date}` === k)) {
+                matches.push(m);
+              }
             });
 
             const eventBox = document.getElementById('ns-insp-linked-event-box');

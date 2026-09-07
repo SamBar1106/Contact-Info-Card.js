@@ -50,6 +50,7 @@
       clients: new Map(),
       clientContacts: new Map(),
       eventAttendance: new Map(),
+      contactSchedules: new Map(),
       weekHeaders: new WeakMap()
     };
 
@@ -319,7 +320,7 @@
 
       // 3. DD-Mon-YYYY
       const monthsMap = { jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
-      const ddmmyyyy = s.match(/\b(\d{1,2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*-(\d{2,4})\b/i);
+      const ddmmyyyy = s.match(/\b(\d{1,2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*-\d{2,4}\b/i);
       if (ddmmyyyy) {
         let yr = ddmmyyyy[3];
         if (yr.length === 2) yr = '20' + yr;
@@ -524,6 +525,183 @@
       const list = Array.from(contactMap.values());
       cache.clientContacts.set(clientId, list);
       return list;
+    }
+
+    /* Contact Page Attendance/Scheduling (custom26) Machine Parser */
+    async function getContactSchedulingRecords(contactId) {
+      if (!contactId) return [];
+      if (cache.contactSchedules.has(contactId)) {
+        return cache.contactSchedules.get(contactId);
+      }
+
+      try {
+        const url = `/app/common/entity/contact.nl?id=${contactId}&selectedtab=custom26`;
+        const res = await fetch(url);
+        if (!res.ok) return [];
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        const records = [];
+
+        function parseMachine(machineKey, defaultType) {
+          const rows = Array.from(doc.querySelectorAll(
+            `tr[id^="${machineKey}row"], tr[id^="${machineKey}_row"], table[id*="${machineKey}"] tr.uir-list-row-tr, [id*="${machineKey}"] tr.uir-list-row-tr`
+          ));
+          if (!rows.length) return;
+
+          const tbl = rows[0].closest('table');
+          const headerRow = tbl ? tbl.querySelector('tr.uir-list-header-tr, tr:has(.listheader), tr:has(th)') : null;
+          
+          let statusCol = -1;
+          let titleCol = -1;
+          let dateCol = -1;
+          const dayCols = [];
+
+          if (headerRow) {
+            Array.from(headerRow.children).forEach((th, idx) => {
+              const txt = (th.innerText || th.textContent || '').trim().toLowerCase();
+              if (txt.includes('status')) statusCol = idx;
+              else if (txt.includes('course') || txt.includes('seminar') || txt.includes('event') || txt.includes('title')) titleCol = idx;
+              else if (txt.includes('week') || txt.includes('date')) dateCol = idx;
+              else {
+                const dm = txt.match(/\b(mon|tue|wed|thu|fri|sat)\b/i);
+                if (dm) dayCols.push({ day: dm[1].toLowerCase(), index: idx });
+              }
+            });
+          }
+
+          rows.forEach(row => {
+            const cells = Array.from(row.querySelectorAll('td'));
+            if (!cells.length) return;
+
+            // 1. Edit Target Link (Rectype 56 or Custom Record)
+            let editUrl = '';
+            const editA = row.querySelector('a[href*="custrecordentry.nl"], a[href*="rectype="], a[href*="&e=T"]');
+            if (editA) {
+              let h = editA.getAttribute('href') || '';
+              if (h && !h.startsWith('/app/')) {
+                if (h.startsWith('../')) h = '/app/' + h.replace(/^\.\.\//, '');
+                else if (h.startsWith('custom/')) h = '/app/common/' + h;
+                else if (!h.startsWith('/')) h = '/app/common/custom/' + h;
+              }
+              editUrl = h;
+            }
+
+            // 2. Status Column with Text Fallback
+            let status = '';
+            if (statusCol !== -1 && cells[statusCol]) {
+              status = (cells[statusCol].innerText || cells[statusCol].textContent || '').trim();
+            }
+            if (!status || /^(edit|view)$/i.test(status)) {
+              for (const cell of cells) {
+                const t = (cell.innerText || cell.textContent || '').trim();
+                if (/\b(confirmed|scheduled|rescheduled|re-scheduled|attended|completed|cancell?ed|no[-\s]?show|noshow|ns|registered|waitlist|tentative|pending)\b/i.test(t) && t.length < 25) {
+                  status = t;
+                  break;
+                }
+              }
+            }
+
+            // 3. Course / Event Title
+            let title = '';
+            if (titleCol !== -1 && cells[titleCol]) {
+              title = (cells[titleCol].innerText || cells[titleCol].textContent || '').trim();
+            }
+            if (!title) {
+              for (let i = 0; i < cells.length; i++) {
+                if (i === statusCol || i === dateCol) continue;
+                const t = (cells[i].innerText || cells[i].textContent || '').trim();
+                if (t.length > 3 && !/^(yes|no|none|edit|view)$/i.test(t) && !extractDateFromLine(t) && !/\b(confirmed|scheduled|attended)\b/i.test(t)) {
+                  title = t;
+                  break;
+                }
+              }
+            }
+
+            // 4. Week Attending / Date Resolution
+            let rawDate = '';
+            if (dateCol !== -1 && cells[dateCol]) {
+              rawDate = (cells[dateCol].innerText || cells[dateCol].textContent || '').trim();
+            }
+            if (!rawDate) {
+              for (const cell of cells) {
+                const t = (cell.innerText || cell.textContent || '').trim();
+                const dM = extractDateFromLine(t);
+                if (dM) { rawDate = dM.rawDate; break; }
+              }
+            }
+
+            // 5. Daily Attendance Verification (Thu, Fri, etc. marked "Yes")
+            const attendedDays = [];
+            dayCols.forEach(dc => {
+              if (cells[dc.index]) {
+                const v = (cells[dc.index].innerText || cells[dc.index].textContent || '').trim().toLowerCase();
+                if (v === 'yes' || v === 'y' || cells[dc.index].querySelector('img[src*="check"], input:checked')) {
+                  attendedDays.push(dc.day);
+                }
+              }
+            });
+
+            // Calculate precise attending dates from Week Attending base
+            let finalDateStr = rawDate;
+            let finalIso = normalizeDate(rawDate);
+
+            if (finalIso && attendedDays.length > 0) {
+              const p = finalIso.split('-').map(Number);
+              const baseDt = new Date(p[0], p[1] - 1, p[2]);
+              const baseDay = baseDt.getDay();
+              const monOffset = baseDay === 0 ? -6 : 1 - baseDay;
+              const mondayDt = new Date(baseDt);
+              mondayDt.setDate(baseDt.getDate() + monOffset);
+
+              const dayOffsetMap = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
+              const validOffsets = attendedDays.map(d => dayOffsetMap[d]).filter(n => n !== undefined).sort((a,b) => a - b);
+              
+              if (validOffsets.length > 0) {
+                const firstDayDt = new Date(mondayDt);
+                firstDayDt.setDate(mondayDt.getDate() + validOffsets[0]);
+                const lastDayDt = new Date(mondayDt);
+                lastDayDt.setDate(mondayDt.getDate() + validOffsets[validOffsets.length - 1]);
+
+                finalIso = `${firstDayDt.getFullYear()}-${String(firstDayDt.getMonth() + 1).padStart(2, '0')}-${String(firstDayDt.getDate()).padStart(2, '0')}`;
+                const m1 = firstDayDt.getMonth() + 1;
+                const d1 = firstDayDt.getDate();
+                const m2 = lastDayDt.getMonth() + 1;
+                const d2 = lastDayDt.getDate();
+
+                if (validOffsets.length === 1) {
+                  finalDateStr = `${m1}/${d1}/${firstDayDt.getFullYear()}`;
+                } else if (m1 === m2) {
+                  finalDateStr = `${m1}/${d1} - ${m1}/${d2}/${firstDayDt.getFullYear()}`;
+                } else {
+                  finalDateStr = `${m1}/${d1} - ${m2}/${d2}/${firstDayDt.getFullYear()}`;
+                }
+              }
+            }
+
+            if (finalIso || title) {
+              records.push({
+                title: title || defaultType,
+                rawDate: finalDateStr || rawDate,
+                iso: finalIso,
+                status: status || 'Scheduled',
+                editUrl,
+                attendedDays
+              });
+            }
+          });
+        }
+
+        parseMachine('recmachcustrecord_crs_attendee_contact', 'Course');
+        parseMachine('recmachcustrecord_mge_event_contact', 'Event');
+        parseMachine('recmachcustrecord_olca_contact', 'Online Course');
+
+        cache.contactSchedules.set(contactId, records);
+        return records;
+      } catch (err) {
+        console.warn('Failed to parse contact scheduling subtabs:', err);
+        return [];
+      }
     }
 
     const style = document.createElement('style');
@@ -733,7 +911,38 @@
     const seminarPill = document.getElementById('ns-seminar-pip-pill');
     const btnScan60d = document.getElementById('ns-insp-btn-scan-60d');
 
-    /* Standalone 60-Day Office Outlook Window Scanner */
+    /* Status Badge Resolver */
+    function getStatusBadge(status) {
+      if (!status || /^(edit|view)$/i.test(status.trim())) return '';
+      const s = status.trim().toLowerCase();
+      let bg = 'rgba(255, 255, 255, 0.08)', color = 'rgb(228, 228, 231)', border = 'rgba(255, 255, 255, 0.18)';
+
+      if (s.includes('resched') || s.includes('re-sched') || s.includes('schedule change') || s.includes('sched change')) {
+        bg = 'rgba(249, 115, 22, 0.25)'; color = 'rgb(251, 146, 60)'; border = 'rgba(249, 115, 22, 0.5)';
+      } else if (s.includes('noshow') || s.includes('no show') || s.includes('no-show') || s === 'ns' || s.includes('did not attend') || s.includes('absent')) {
+        bg = 'rgba(239, 68, 68, 0.25)'; color = 'rgb(248, 113, 113)'; border = 'rgba(239, 68, 68, 0.6)';
+      } else if (s.includes('cancel') || s.includes('cxl')) {
+        bg = 'rgba(239, 68, 68, 0.15)'; color = 'rgb(252, 165, 165)'; border = 'rgba(239, 68, 68, 0.35)';
+      } else if (s.includes('confirm')) {
+        bg = 'rgba(34, 197, 94, 0.2)'; color = 'rgb(74, 222, 128)'; border = 'rgba(34, 197, 94, 0.4)';
+      } else if (s.includes('attend') || s.includes('complet') || s.includes('present')) {
+        bg = 'rgba(59, 130, 246, 0.2)'; color = 'rgb(96, 165, 250)'; border = 'rgba(59, 130, 246, 0.4)';
+      } else if (s.includes('wait')) {
+        bg = 'rgba(168, 85, 247, 0.2)'; color = 'rgb(192, 132, 252)'; border = 'rgba(168, 85, 247, 0.4)';
+      } else if (s.includes('sched')) {
+        bg = 'rgba(245, 158, 11, 0.2)'; color = 'rgb(251, 191, 36)'; border = 'rgba(245, 158, 11, 0.4)';
+      } else if (s.includes('reg') || s.includes('enroll')) {
+        bg = 'rgba(20, 184, 166, 0.2)'; color = 'rgb(45, 212, 191)'; border = 'rgba(20, 184, 166, 0.4)';
+      } else if (s.includes('pend') || s.includes('tentat') || s.includes('standby') || s.includes('invited')) {
+        bg = 'rgba(6, 182, 212, 0.2)'; color = 'rgb(103, 232, 249)'; border = 'rgba(6, 182, 212, 0.4)';
+      } else if (s.includes('declin') || s.includes('refus')) {
+        bg = 'rgba(156, 163, 175, 0.2)'; color = 'rgb(209, 213, 219)'; border = 'rgba(156, 163, 175, 0.4)';
+      }
+
+      return `<span class="pill" style="background:${bg}; color:${color}; border:1px solid ${border}; font-size:10px; font-weight:700;">${status}</span>`;
+    }
+
+    /* Standalone 60-Day Office Outlook Window Scanner with Status Resolution */
     btnScan60d.onclick = async () => {
       if (!activeClientInternalId) {
         alert('Please click on an attendee or client on the board first.');
@@ -745,7 +954,7 @@
       const scanContactId = activeContactId;
       const scanContactName = activeContactName;
 
-      const outWidth = 820;
+      const outWidth = 920;
       const outHeight = 670;
       const currX = window.screenX !== undefined ? window.screenX : window.screenLeft;
       const currY = window.screenY !== undefined ? window.screenY : window.screenTop;
@@ -825,7 +1034,7 @@
           </div>
 
           <div id="out-progress-box" style="padding:8px 14px; font-size:11px; color:rgb(251,191,36); background:rgba(251,191,36,0.08); border-bottom:1px solid rgba(251,191,36,0.2); display:flex; align-items:center; gap:8px;">
-            <span>Scanning office schedule PDFs: </span>
+            <span>Resolving contact schedules and statuses: </span>
             <strong id="out-progress-count">0 / 0</strong>
           </div>
 
@@ -833,15 +1042,16 @@
             <table class="table-60d">
               <thead>
                 <tr>
-                  <th style="width:26%;">Attendee</th>
-                  <th style="width:34%;">Course / Seminar</th>
+                  <th style="width:20%;">Attendee</th>
+                  <th style="width:28%;">Course / Seminar</th>
                   <th style="width:16%;">Date</th>
-                  <th style="width:12%;">Timeline</th>
-                  <th style="width:12%;">Actions</th>
+                  <th style="width:12%;">Status</th>
+                  <th style="width:10%;">Timeline</th>
+                  <th style="width:14%;">Actions</th>
                 </tr>
               </thead>
               <tbody id="out-tbody">
-                <tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:30px;">Discovering office contacts (Relationships subtab)...</td></tr>
+                <tr><td colspan="6" style="text-align:center; color:rgb(161,161,170); padding:30px;">Discovering office contacts (Relationships subtab)...</td></tr>
               </tbody>
             </table>
           </div>
@@ -868,7 +1078,7 @@
 
         if (!contacts.length) {
           progressBox.style.display = 'none';
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(248,113,113); padding:30px;">No registered contacts found under Relationships tab.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:rgb(248,113,113); padding:30px;">No registered contacts found under Relationships tab.</td></tr>';
           return;
         }
 
@@ -884,58 +1094,110 @@
         for (let i = 0; i < contacts.length; i += chunkSize) {
           if (outlookWindow.closed) return;
           const chunk = contacts.slice(i, i + chunkSize);
+
           await Promise.all(chunk.map(async (contact) => {
             const pdfUrl = `/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=${contact.id}`;
-            try {
-              const lines = await extractLinesFromPdf(pdfUrl);
-              for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-                const line = lines[lineIdx];
-                const dateInfo = extractDateFromLine(line);
+            
+            const [schedRecords, pdfLines] = await Promise.all([
+              getContactSchedulingRecords(contact.id).catch(() => []),
+              extractLinesFromPdf(pdfUrl).catch(() => [])
+            ]);
 
-                if (dateInfo && dateInfo.iso) {
-                  const p = dateInfo.iso.split('-').map(Number);
-                  const dt = new Date(p[0], p[1] - 1, p[2]);
+            // 1. Process direct records from Contact Attendance/Scheduling subtab (custom26)
+            schedRecords.forEach(rec => {
+              if (rec.iso) {
+                const p = rec.iso.split('-').map(Number);
+                const dt = new Date(p[0], p[1] - 1, p[2]);
 
-                  if (!isNaN(dt.getTime()) && dt >= now && dt <= sixtyDaysOut) {
-                    const diffDays = Math.ceil((dt - now) / (1000 * 60 * 60 * 24));
-                    let cleanTitle = line.replace(dateInfo.rawDate, '')
-                                         .replace(/\b(edit|view|scheduled|confirmed|completed|rescheduled|schedule\s*change|the|on|dates?)\b/gi, '')
-                                         .replace(/[^a-zA-Z0-9\s&/'"-]/g, ' ')
-                                         .replace(/\s+/g, ' ')
-                                         .trim();
+                if (!isNaN(dt.getTime()) && dt >= now && dt <= sixtyDaysOut) {
+                  const diffDays = Math.ceil((dt - now) / (1000 * 60 * 60 * 24));
+                  const k = `${contact.id}_${rec.title}_${rec.iso}`;
 
-                    if (cleanTitle.length < 4) {
-                      const prevLine = lineIdx > 0 ? lines[lineIdx - 1] : '';
-                      const nextLine = lineIdx + 1 < lines.length ? lines[lineIdx + 1] : '';
-
-                      if (prevLine && !extractDateFromLine(prevLine)) {
-                        cleanTitle = prevLine.replace(/\b(edit|view|scheduled|confirmed|completed|rescheduled)\b/gi, '').trim();
-                      } else if (nextLine && !extractDateFromLine(nextLine)) {
-                        cleanTitle = nextLine.replace(/\b(edit|view|scheduled|confirmed|completed|rescheduled)\b/gi, '').trim();
-                      } else {
-                        cleanTitle = 'Scheduled Seminar';
-                      }
-                    }
-
-                    const k = `${contact.id}_${cleanTitle}_${dateInfo.iso}`;
-                    if (!upcomingEvents.some(x => x.key === k)) {
-                      upcomingEvents.push({
-                        key: k,
-                        contactName: contact.name,
-                        contactId: contact.id,
-                        position: contact.position || 'Contact',
-                        title: cleanTitle,
-                        dateStr: dateInfo.rawDate,
-                        iso: dateInfo.iso,
-                        timestamp: dt.getTime(),
-                        diffDays,
-                        pdfUrl
-                      });
-                    }
+                  if (!upcomingEvents.some(x => x.key === k)) {
+                    upcomingEvents.push({
+                      key: k,
+                      contactName: contact.name,
+                      contactId: contact.id,
+                      position: contact.position || 'Contact',
+                      title: rec.title,
+                      dateStr: rec.rawDate,
+                      iso: rec.iso,
+                      status: rec.status || 'Scheduled',
+                      editUrl: rec.editUrl || '',
+                      timestamp: dt.getTime(),
+                      diffDays,
+                      pdfUrl
+                    });
                   }
                 }
               }
-            } catch (err) {}
+            });
+
+            // 2. Correlate with PDF text extract layer and enrich missing entries
+            for (let lineIdx = 0; lineIdx < pdfLines.length; lineIdx++) {
+              const line = pdfLines[lineIdx];
+              const dateInfo = extractDateFromLine(line);
+
+              if (dateInfo && dateInfo.iso) {
+                const p = dateInfo.iso.split('-').map(Number);
+                const dt = new Date(p[0], p[1] - 1, p[2]);
+
+                if (!isNaN(dt.getTime()) && dt >= now && dt <= sixtyDaysOut) {
+                  const diffDays = Math.ceil((dt - now) / (1000 * 60 * 60 * 24));
+                  let cleanTitle = line.replace(dateInfo.rawDate, '')
+                                       .replace(/\b(edit|view|scheduled|confirmed|completed|rescheduled|schedule\s*change|the|on|dates?)\b/gi, '')
+                                       .replace(/[^a-zA-Z0-9\s&/'"-]/g, ' ')
+                                       .replace(/\s+/g, ' ')
+                                       .trim();
+
+                  if (cleanTitle.length < 4) {
+                    const prevLine = lineIdx > 0 ? pdfLines[lineIdx - 1] : '';
+                    const nextLine = lineIdx + 1 < pdfLines.length ? pdfLines[lineIdx + 1] : '';
+
+                    if (prevLine && !extractDateFromLine(prevLine)) {
+                      cleanTitle = prevLine.replace(/\b(edit|view|scheduled|confirmed|completed|rescheduled)\b/gi, '').trim();
+                    } else if (nextLine && !extractDateFromLine(nextLine)) {
+                      cleanTitle = nextLine.replace(/\b(edit|view|scheduled|confirmed|completed|rescheduled)\b/gi, '').trim();
+                    } else {
+                      cleanTitle = 'Scheduled Seminar';
+                    }
+                  }
+
+                  const matchedSchedule = schedRecords.find(sr => 
+                    (sr.iso && sr.iso === dateInfo.iso) || 
+                    (sr.title && cleanTitle && (sr.title.toLowerCase().includes(cleanTitle.toLowerCase()) || cleanTitle.toLowerCase().includes(sr.title.toLowerCase())))
+                  );
+
+                  const k = `${contact.id}_${cleanTitle}_${dateInfo.iso}`;
+                  const existingIdx = upcomingEvents.findIndex(x => x.key === k || (x.contactId === contact.id && x.iso === dateInfo.iso));
+
+                  if (existingIdx !== -1) {
+                    if (matchedSchedule && matchedSchedule.status) {
+                      upcomingEvents[existingIdx].status = matchedSchedule.status;
+                    }
+                    if (matchedSchedule && matchedSchedule.editUrl && !upcomingEvents[existingIdx].editUrl) {
+                      upcomingEvents[existingIdx].editUrl = matchedSchedule.editUrl;
+                    }
+                  } else {
+                    upcomingEvents.push({
+                      key: k,
+                      contactName: contact.name,
+                      contactId: contact.id,
+                      position: contact.position || 'Contact',
+                      title: cleanTitle,
+                      dateStr: dateInfo.rawDate,
+                      iso: dateInfo.iso,
+                      status: matchedSchedule?.status || 'Scheduled',
+                      editUrl: matchedSchedule?.editUrl || '',
+                      timestamp: dt.getTime(),
+                      diffDays,
+                      pdfUrl
+                    });
+                  }
+                }
+              }
+            }
+
             processedCount++;
             if (!outlookWindow.closed) {
               progressCount.textContent = `${processedCount} / ${contacts.length}`;
@@ -947,7 +1209,7 @@
         progressBox.style.display = 'none';
 
         if (!upcomingEvents.length) {
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:30px;">No upcoming sessions scheduled in the next 60 days for this office.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:rgb(161,161,170); padding:30px;">No upcoming sessions scheduled in the next 60 days for this office.</td></tr>';
           return;
         }
 
@@ -960,6 +1222,7 @@
 
           const fullPdfUrl = toAbsoluteNsUrl(ev.pdfUrl);
           const fullContactUrl = toAbsoluteNsUrl('/app/common/entity/contact.nl?id=' + ev.contactId);
+          const fullEditUrl = ev.editUrl ? toAbsoluteNsUrl(ev.editUrl) : '';
 
           return `
             <tr>
@@ -969,9 +1232,11 @@
               </td>
               <td style="font-weight:600; color:#fbbf24;">${ev.title}</td>
               <td style="white-space:nowrap;">${ev.dateStr}</td>
+              <td style="white-space:nowrap;">${getStatusBadge(ev.status || 'Scheduled')}</td>
               <td style="white-space:nowrap;">${badge}</td>
               <td style="white-space:nowrap;">
-                <div style="display:flex; gap:6px;">
+                <div style="display:flex; gap:5px; align-items:center;">
+                  ${fullEditUrl ? `<a href="${fullEditUrl}" target="_blank" class="pill" style="cursor:pointer; background:rgba(255,255,255,0.12); color:white; border:1px solid rgba(255,255,255,0.3); text-decoration:none;" title="Open Record in Edit Mode">Edit ↗</a>` : ''}
                   <button class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border:1px solid rgba(192,132,252,0.4);" data-action-pdf="${fullPdfUrl}" data-action-name="${ev.contactName}">📄 PDF</button>
                   <a href="${fullContactUrl}" target="_blank" class="pill" style="cursor:pointer; background:rgba(255,255,255,0.08); color:white; border:1px solid rgba(255,255,255,0.18); text-decoration:none;">Open ↗</a>
                 </div>
@@ -991,7 +1256,7 @@
       } catch (err) {
         if (!outlookWindow.closed) {
           progressBox.style.display = 'none';
-          tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:rgb(248,113,113); padding:30px;">Scan failed: ${err.message}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:rgb(248,113,113); padding:30px;">Scan failed: ${err.message}</td></tr>`;
         }
       }
     };
@@ -1214,37 +1479,6 @@
         seminarPipWin.close();
         seminarPipWin = null;
       }
-    }
-
-    /* Status Badge Resolver */
-    function getStatusBadge(status) {
-      if (!status || /^(edit|view)$/i.test(status.trim())) return '';
-      const s = status.trim().toLowerCase();
-      let bg = 'rgba(255, 255, 255, 0.08)', color = 'rgb(228, 228, 231)', border = 'rgba(255, 255, 255, 0.18)';
-
-      if (s.includes('resched') || s.includes('re-sched') || s.includes('schedule change') || s.includes('sched change')) {
-        bg = 'rgba(249, 115, 22, 0.25)'; color = 'rgb(251, 146, 60)'; border = 'rgba(249, 115, 22, 0.5)';
-      } else if (s.includes('noshow') || s.includes('no show') || s.includes('no-show') || s === 'ns' || s.includes('did not attend') || s.includes('absent')) {
-        bg = 'rgba(239, 68, 68, 0.25)'; color = 'rgb(248, 113, 113)'; border = 'rgba(239, 68, 68, 0.6)';
-      } else if (s.includes('cancel') || s.includes('cxl')) {
-        bg = 'rgba(239, 68, 68, 0.15)'; color = 'rgb(252, 165, 165)'; border = 'rgba(239, 68, 68, 0.35)';
-      } else if (s.includes('confirm')) {
-        bg = 'rgba(34, 197, 94, 0.2)'; color = 'rgb(74, 222, 128)'; border = 'rgba(34, 197, 94, 0.4)';
-      } else if (s.includes('attend') || s.includes('complet') || s.includes('present')) {
-        bg = 'rgba(59, 130, 246, 0.2)'; color = 'rgb(96, 165, 250)'; border = 'rgba(59, 130, 246, 0.4)';
-      } else if (s.includes('wait')) {
-        bg = 'rgba(168, 85, 247, 0.2)'; color = 'rgb(192, 132, 252)'; border = 'rgba(168, 85, 247, 0.4)';
-      } else if (s.includes('sched')) {
-        bg = 'rgba(245, 158, 11, 0.2)'; color = 'rgb(251, 191, 36)'; border = 'rgba(245, 158, 11, 0.4)';
-      } else if (s.includes('reg') || s.includes('enroll')) {
-        bg = 'rgba(20, 184, 166, 0.2)'; color = 'rgb(45, 212, 191)'; border = 'rgba(20, 184, 166, 0.4)';
-      } else if (s.includes('pend') || s.includes('tentat') || s.includes('standby') || s.includes('invited')) {
-        bg = 'rgba(6, 182, 212, 0.2)'; color = 'rgb(103, 232, 249)'; border = 'rgba(6, 182, 212, 0.4)';
-      } else if (s.includes('declin') || s.includes('refus')) {
-        bg = 'rgba(156, 163, 175, 0.2)'; color = 'rgb(209, 213, 219)'; border = 'rgba(156, 163, 175, 0.4)';
-      }
-
-      return `<span class="pill" style="background:${bg}; color:${color}; border:1px solid ${border}; font-size:10px; font-weight:700;">${status}</span>`;
     }
 
     async function renderSeminarInPiP(list, title, clientName, dates) {
@@ -2155,7 +2389,6 @@
       }
       if (!rawText) rawText = (clickedCell.innerText || clickedCell.textContent || '').trim();
 
-      // Cleanly separate Client Name and Attendee Name across colon format
       let clientParsedName = '';
       let attendeeParsedName = rawText.replace(/\(\d+\)/g, '').trim();
       if (rawText.includes(':')) {

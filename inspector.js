@@ -84,39 +84,40 @@
     window.addEventListener('pagehide', saveWindowGeometry);
     setInterval(saveWindowGeometry, 1500);
 
-    /* Guaranteed Parent Board Style Injector */
+    /* Guaranteed Parent Board Style Injector (Floating Yellow Design) */
     function ensureBoardStyles(doc) {
-      if (!doc || doc.getElementById('ns-inspector-board-styles')) return;
-      const s = doc.createElement('style');
-      s.id = 'ns-inspector-board-styles';
+      if (!doc) return;
+      let s = doc.getElementById('ns-inspector-board-styles');
+      if (!s) {
+        s = doc.createElement('style');
+        s.id = 'ns-inspector-board-styles';
+        (doc.head || doc.body).appendChild(s);
+      }
       s.textContent = `
-        @keyframes nsPulseHighlight {
-          0%   { box-shadow: 0 0 8px #00e5ff, inset 0 0 10px rgba(0,229,255,0.6); }
-          50%  { box-shadow: 0 0 22px #00e5ff, inset 0 0 18px rgba(0,229,255,0.9); }
-          100% { box-shadow: 0 0 8px #00e5ff, inset 0 0 10px rgba(0,229,255,0.6); }
-        }
         .ns-inspector-active-highlight {
-          outline: 3px solid #00e5ff !important;
-          outline-offset: -2px !important;
-          background-color: rgba(0, 229, 255, 0.45) !important;
-          animation: nsPulseHighlight 1.6s infinite ease-in-out !important;
+          outline: 2px solid #ca8a04 !important;
+          outline-offset: -1px !important;
+          background-color: #fef08a !important;
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28) !important;
+          transform: translateY(-2px) !important;
           position: relative !important;
           z-index: 9999 !important;
-          border-radius: 3px !important;
-          transition: all 0.15s ease-in-out !important;
+          border-radius: 4px !important;
+          transition: transform 0.15s ease, box-shadow 0.15s ease !important;
         }
+        .ns-inspector-active-highlight,
         .ns-inspector-active-highlight a,
         .ns-inspector-active-highlight span,
         .ns-inspector-active-highlight div {
           color: #000000 !important;
           font-weight: 800 !important;
-          text-shadow: 0 0 3px #ffffff !important;
+          font-size: calc(100% + 2px) !important;
+          text-shadow: none !important;
         }
       `;
-      (doc.head || doc.body).appendChild(s);
     }
 
-    /* Bulletproof Board Highlighter (Class + Inline Priority Backup) */
+    /* Floating Yellow Board Highlighter */
     function highlightBoardElement(el) {
       try {
         if (!el) return;
@@ -130,8 +131,9 @@
           node.style.removeProperty('outline-offset');
           node.style.removeProperty('box-shadow');
           node.style.removeProperty('background-color');
-          node.style.removeProperty('animation');
+          node.style.removeProperty('transform');
           node.style.removeProperty('z-index');
+          node.style.removeProperty('border-radius');
         });
 
         // Resolve exact target element
@@ -144,13 +146,14 @@
         if (target) {
           target.classList.add('ns-inspector-active-highlight');
 
-          // Apply direct inline styles with !important to defeat NetSuite table CSS
-          target.style.setProperty('outline', '3px solid #00e5ff', 'important');
-          target.style.setProperty('outline-offset', '-2px', 'important');
-          target.style.setProperty('box-shadow', '0 0 18px #00e5ff, inset 0 0 14px rgba(0, 229, 255, 0.7)', 'important');
-          target.style.setProperty('background-color', 'rgba(0, 229, 255, 0.45)', 'important');
-          target.style.setProperty('animation', 'nsPulseHighlight 1.6s infinite ease-in-out', 'important');
+          // Apply direct inline styles with !important as fallback for NetSuite table styles
+          target.style.setProperty('outline', '2px solid #ca8a04', 'important');
+          target.style.setProperty('outline-offset', '-1px', 'important');
+          target.style.setProperty('background-color', '#fef08a', 'important');
+          target.style.setProperty('box-shadow', '0 4px 14px rgba(0, 0, 0, 0.28)', 'important');
+          target.style.setProperty('transform', 'translateY(-2px)', 'important');
           target.style.setProperty('z-index', '9999', 'important');
+          target.style.setProperty('border-radius', '4px', 'important');
 
           if (typeof target.scrollIntoView === 'function') {
             target.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
@@ -172,8 +175,9 @@
             node.style.removeProperty('outline-offset');
             node.style.removeProperty('box-shadow');
             node.style.removeProperty('background-color');
-            node.style.removeProperty('animation');
+            node.style.removeProperty('transform');
             node.style.removeProperty('z-index');
+            node.style.removeProperty('border-radius');
           });
         }
       } catch (e) {}
@@ -1745,7 +1749,6 @@
         if (!window.opener || window.opener.closed) { setBridgeStatus(false); return; }
         const oDoc = window.opener.document;
         if (oDoc && oDoc.body) {
-          // Unconditionally inject board styles on every poll
           ensureBoardStyles(oDoc);
 
           if (!oDoc.__nsInspectorBridgeHooked) {

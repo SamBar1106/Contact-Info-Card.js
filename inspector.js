@@ -407,7 +407,7 @@
         if (iso) return { rawDate: ddmonM[0], iso };
       }
 
-      const monNameM = line.match(/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*,?\s*\d{2,4})?\b/i);
+      const monNameM = line.match(/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*,?\s*(\d{2,4}))?\b/i);
       if (monNameM) {
         const iso = normalizeDate(monNameM[0]);
         if (iso) return { rawDate: monNameM[0], iso };
@@ -545,7 +545,7 @@
       return list;
     }
 
-    /* Contact Page Attendance/Scheduling (custom26) Machine Parser */
+    /* Comprehensive Contact Page Attendance/Scheduling (custom26) Machine Parser */
     async function getContactSchedulingRecords(contactId) {
       if (!contactId) return [];
       if (cache.contactSchedules.has(contactId)) {
@@ -553,80 +553,76 @@
       }
 
       try {
-        const url = `/app/common/entity/contact.nl?id=${contactId}&selectedtab=custom26`;
-        const res = await fetch(url);
+        const mainUrl = `/app/common/entity/contact.nl?id=${contactId}&selectedtab=custom26`;
+        const res = await fetch(mainUrl);
         if (!res.ok) return [];
         const html = await res.text();
-        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const mainDoc = new DOMParser().parseFromString(html, 'text/html');
+        const allDocs = [mainDoc];
+
+        // Fetch submachine tabs if not rendered in primary DOM view
+        const extraFetches = [];
+        if (!html.includes('rectype=54') && !html.includes('recmachcustrecord_mge_event_contact')) {
+          extraFetches.push(
+            fetch(`/app/common/entity/contact.nl?id=${contactId}&selectedtab=custom26&q=recmachcustrecord_mge_event_contactrange&si=0&f=T&machine=recmachcustrecord_mge_event_contact`).then(r => r.text()).catch(() => '')
+          );
+        }
+        if (!html.includes('rectype=56') && !html.includes('recmachcustrecord_crs_attendee_contact')) {
+          extraFetches.push(
+            fetch(`/app/common/entity/contact.nl?id=${contactId}&selectedtab=custom26&q=recmachcustrecord_crs_attendee_contactrange&si=0&f=T&machine=recmachcustrecord_crs_attendee_contact`).then(r => r.text()).catch(() => '')
+          );
+        }
+
+        if (extraFetches.length > 0) {
+          const subResults = await Promise.allSettled(extraFetches);
+          subResults.forEach(sr => {
+            if (sr.status === 'fulfilled' && sr.value && sr.value.length > 200) {
+              allDocs.push(new DOMParser().parseFromString(sr.value, 'text/html'));
+            }
+          });
+        }
 
         const records = [];
+        const seenRecords = new Set();
 
-        function parseMachine(machineKey, defaultType) {
-          const rows = Array.from(doc.querySelectorAll(
-            `tr[id^="${machineKey}row"], tr[id^="${machineKey}_row"], table[id*="${machineKey}"] tr.uir-list-row-tr, [id*="${machineKey}"] tr.uir-list-row-tr, [id*="${machineKey}"] tr[class*="uir-list-row"]`
+        allDocs.forEach(d => {
+          const editAnchors = Array.from(d.querySelectorAll(
+            'a.dottedlink[href*="custrecordentry.nl"], a[href*="custrecordentry.nl"], a[onclick*="custrecordentry.nl"]'
           ));
-          if (!rows.length) return;
 
-          const tbl = rows[0].closest('table');
-          const headerRow = tbl ? tbl.querySelector('tr.uir-list-header-tr, tr:has(.listheader), tr:has(th)') : null;
-          
-          let statusCol = -1;
-          let titleCol = -1;
-          let dateCol = -1;
-          const dayCols = [];
+          editAnchors.forEach(a => {
+            const row = a.closest('tr');
+            if (!row) return;
 
-          if (headerRow) {
-            Array.from(headerRow.children).forEach((th, idx) => {
-              const txt = (th.innerText || th.textContent || '').trim().toLowerCase();
-              if (txt.includes('status')) statusCol = idx;
-              else if (txt.includes('course') || txt.includes('seminar') || txt.includes('event') || txt.includes('title')) titleCol = idx;
-              else if (txt.includes('week') || txt.includes('date')) dateCol = idx;
-              else {
-                const dm = txt.match(/\b(mon|tue|wed|thu|fri|sat)\b/i);
-                if (dm) dayCols.push({ day: dm[1].toLowerCase(), index: idx });
-              }
-            });
-          }
+            const href = a.getAttribute('href') || '';
+            const oc = a.getAttribute('onclick') || '';
+            const combined = href + ' ' + oc;
 
-          rows.forEach(row => {
+            const m = combined.match(/(?:https?:\/\/[^\s'"]+)?(?:\/app\/common\/custom\/|\.\.\/custom\/|custom\/)?(custrecordentry\.nl\?[^'"\s\)]+)/i);
+            if (!m) return;
+
+            let editUrl = m[1].replace(/&amp;/g, '&');
+            if (!editUrl.startsWith('/app/common/custom/')) editUrl = '/app/common/custom/' + editUrl;
+            if (!editUrl.includes('&e=T')) editUrl += '&e=T';
+
+            const rectype = editUrl.match(/[?&]rectype=(\d+)/)?.[1] || '';
+            const defaultType = rectype === '56' ? 'Course' : (rectype === '54' ? 'Event' : 'Seminar');
+
             const cells = Array.from(row.querySelectorAll('td'));
             if (!cells.length) return;
 
-            let editUrl = '';
-            const allLinks = Array.from(row.querySelectorAll('a'));
-            for (const a of allLinks) {
-              const txt = (a.innerText || a.textContent || '').trim().toLowerCase();
-              const h = a.getAttribute('href') || '';
-              const oc = a.getAttribute('onclick') || '';
-              const combined = h + ' ' + oc;
-
-              if (txt === 'edit' || combined.includes('custrecordentry.nl') || combined.includes('rectype=') || combined.includes('&e=T')) {
-                const mCust = combined.match(/(?:https?:\/\/[^\s'"]+)?(?:\/app\/common\/custom\/|\.\.\/custom\/|custom\/)?(custrecordentry\.nl\?[^'"\s\)]+)/i);
-                if (mCust) {
-                  let q = mCust[1].replace(/&amp;/g, '&');
-                  if (!q.startsWith('/app/common/custom/')) q = '/app/common/custom/' + q;
-                  if (!q.includes('&e=T')) q += '&e=T';
-                  editUrl = q;
-                  break;
-                }
-                const mApp = combined.match(/\/app\/[^\s'"\)]+/);
-                if (mApp) {
-                  let q = mApp[0].replace(/&amp;/g, '&');
-                  if (!q.includes('&e=T')) q += '&e=T';
-                  editUrl = q;
-                  break;
-                }
+            let status = '';
+            for (const c of cells) {
+              const t = (c.innerText || c.textContent || '').trim();
+              if (/^(confirmed|scheduled|rescheduled|re-scheduled|attended|completed|cancell?ed|no[-\s]?show|noshow|ns|registered|waitlist|tentative|pending)$/i.test(t)) {
+                status = t;
+                break;
               }
             }
-
-            let status = '';
-            if (statusCol !== -1 && cells[statusCol]) {
-              status = (cells[statusCol].innerText || cells[statusCol].textContent || '').trim();
-            }
-            if (!status || /^(edit|view)$/i.test(status)) {
-              for (const cell of cells) {
-                const t = (cell.innerText || cell.textContent || '').trim();
-                if (/\b(confirmed|scheduled|rescheduled|re-scheduled|attended|completed|cancell?ed|no[-\s]?show|noshow|ns|registered|waitlist|tentative|pending)\b/i.test(t) && t.length < 25) {
+            if (!status) {
+              for (const c of cells) {
+                const t = (c.innerText || c.textContent || '').trim();
+                if (t.length < 25 && /\b(confirmed|scheduled|rescheduled|attended|completed|cancell?ed|no[-\s]?show|registered)\b/i.test(t)) {
                   status = t;
                   break;
                 }
@@ -634,41 +630,38 @@
             }
 
             let title = '';
-            if (titleCol !== -1 && cells[titleCol]) {
-              title = (cells[titleCol].innerText || cells[titleCol].textContent || '').trim();
-            }
-            if (!title) {
-              for (let i = 0; i < cells.length; i++) {
-                if (i === statusCol || i === dateCol) continue;
-                const t = (cells[i].innerText || cells[i].textContent || '').trim();
-                if (t.length > 3 && !/^(yes|no|none|edit|view)$/i.test(t) && !extractDateFromLine(t) && !/\b(confirmed|scheduled|attended)\b/i.test(t)) {
-                  title = t;
-                  break;
-                }
+            for (const c of cells) {
+              if (c.contains(a)) continue;
+              const t = (c.innerText || c.textContent || '').replace(/\s+/g, ' ').trim();
+              if (t.length > 3 && !extractDateFromLine(t) && !/^(yes|no|none|edit|view)$/i.test(t) && !/\b(confirmed|scheduled|attended|completed|cancell?ed)\b/i.test(t)) {
+                title = t;
+                break;
               }
             }
 
             let rawDate = '';
-            if (dateCol !== -1 && cells[dateCol]) {
-              rawDate = (cells[dateCol].innerText || cells[dateCol].textContent || '').trim();
-            }
-            if (!rawDate) {
-              for (const cell of cells) {
-                const t = (cell.innerText || cell.textContent || '').trim();
-                const dM = extractDateFromLine(t);
-                if (dM) { rawDate = dM.rawDate; break; }
-              }
+            for (const c of cells) {
+              const t = (c.innerText || c.textContent || '').trim();
+              const dM = extractDateFromLine(t);
+              if (dM) { rawDate = dM.rawDate; break; }
             }
 
+            const tbl = row.closest('table');
+            const headerRow = tbl ? tbl.querySelector('tr.uir-list-header-tr, tr:has(.listheader), tr:has(th)') : null;
             const attendedDays = [];
-            dayCols.forEach(dc => {
-              if (cells[dc.index]) {
-                const v = (cells[dc.index].innerText || cells[dc.index].textContent || '').trim().toLowerCase();
-                if (v === 'yes' || v === 'y' || cells[dc.index].querySelector('img[src*="check"], input:checked')) {
-                  attendedDays.push(dc.day);
+
+            if (headerRow) {
+              Array.from(headerRow.children).forEach((hCell, idx) => {
+                const hTxt = (hCell.innerText || hCell.textContent || '').trim().toLowerCase();
+                const dm = hTxt.match(/\b(mon|tue|wed|thu|fri|sat)\b/i);
+                if (dm && cells[idx]) {
+                  const v = (cells[idx].innerText || cells[idx].textContent || '').trim().toLowerCase();
+                  if (v === 'yes' || v === 'y' || cells[idx].querySelector('img[src*="check"], input:checked')) {
+                    attendedDays.push(dm[1].toLowerCase());
+                  }
                 }
-              }
-            });
+              });
+            }
 
             let finalDateStr = rawDate;
             let finalIso = normalizeDate(rawDate);
@@ -706,22 +699,20 @@
               }
             }
 
-            if (finalIso || title) {
+            const recKey = `${editUrl}_${finalIso}_${title}`;
+            if (!seenRecords.has(recKey)) {
+              seenRecords.add(recKey);
               records.push({
                 title: title || defaultType,
                 rawDate: finalDateStr || rawDate,
                 iso: finalIso,
                 status: status || 'Scheduled',
-                editUrl: editUrl || '',
+                editUrl,
                 attendedDays
               });
             }
           });
-        }
-
-        parseMachine('recmachcustrecord_crs_attendee_contact', 'Course');
-        parseMachine('recmachcustrecord_mge_event_contact', 'Event');
-        parseMachine('recmachcustrecord_olca_contact', 'Online Course');
+        });
 
         cache.contactSchedules.set(contactId, records);
         return records;
@@ -1230,7 +1221,7 @@
               extractLinesFromPdf(pdfUrl).catch(() => [])
             ]);
 
-            // 1. Direct records from Contact Attendance/Scheduling tab (custom26)
+            // 1. Process records discovered directly from contact scheduling subtabs
             schedRecords.forEach(rec => {
               if (rec.iso) {
                 const p = rec.iso.split('-').map(Number);
@@ -1260,7 +1251,7 @@
               }
             });
 
-            // 2. Correlate with PDF text layer + client-wide attendance cache
+            // 2. Correlate with PDF text extract layer and enrich missing edit links
             for (let lineIdx = 0; lineIdx < pdfLines.length; lineIdx++) {
               const line = pdfLines[lineIdx];
               const dateInfo = extractDateFromLine(line);
@@ -1298,7 +1289,8 @@
 
                   const matchedClientAtt = clientAttendance.find(ca =>
                     (ca.contactId === contact.id || (ca.contactName && ca.contactName.toLowerCase().includes(contact.name.toLowerCase()))) &&
-                    ((ca.date && dateInfo.rawDate && ca.date.includes(dateInfo.rawDate)) || areDatesSameWeek(normalizeDate(ca.date), dateInfo.iso))
+                    ((ca.date && dateInfo.rawDate && ca.date.includes(dateInfo.rawDate)) || areDatesSameWeek(normalizeDate(ca.date), dateInfo.iso) ||
+                     (ca.eventTitle && cleanTitle && (ca.eventTitle.toLowerCase().includes(cleanTitle.toLowerCase()) || cleanTitle.toLowerCase().includes(ca.eventTitle.toLowerCase()))))
                   );
 
                   const resolvedEdit = matchedSchedule?.editUrl || matchedClientAtt?.editUrl || '';
@@ -1375,7 +1367,7 @@
               <td style="font-weight:600; color:#fbbf24;">${ev.title}</td>
               <td style="white-space:nowrap;">${ev.dateStr}</td>
               <td style="white-space:nowrap;">
-                <a href="${fullEditUrl}" data-action-edit="${fullEditUrl}" target="_blank" class="status-edit-link" title="Click to edit status record">
+                <a href="${fullEditUrl}" data-action-edit="${fullEditUrl}" target="_blank" class="status-edit-link" title="Click to open Edit record">
                   ${getStatusBadge(ev.status || 'Scheduled')}
                 </a>
               </td>
@@ -1390,41 +1382,39 @@
         tbody.querySelectorAll('.status-edit-link').forEach(link => {
           link.onclick = (e) => {
             const editUrl = link.getAttribute('data-action-edit') || link.getAttribute('href');
-            if (!editUrl || editUrl === 'javascript:void(0)') return;
-
-            e.preventDefault();
-            e.stopPropagation();
+            if (!editUrl) return;
 
             const curX = outlookWindow.screenX !== undefined ? outlookWindow.screenX : outlookWindow.screenLeft;
             const curY = outlookWindow.screenY !== undefined ? outlookWindow.screenY : outlookWindow.screenTop;
             const curW = outlookWindow.outerWidth || 920;
 
             let targetLeft = curX + curW + 15;
-            if (targetLeft + 850 > (window.screen.availWidth || 1920)) {
-              targetLeft = Math.max(10, curX - 865);
+            if (targetLeft + 860 > (window.screen.availWidth || 1920)) {
+              targetLeft = Math.max(10, curX - 875);
               if (targetLeft <= 10) targetLeft = Math.max(20, curX + 30);
             }
-            let targetTop = Math.max(20, curY);
+            const targetTop = Math.max(20, curY);
 
-            const winFeatures = `popup=1,width=850,height=820,left=${targetLeft},top=${targetTop},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
-            
-            let editWin = null;
+            const winFeatures = `popup=1,width=860,height=820,left=${targetLeft},top=${targetTop},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
+
             try {
-              editWin = outlookWindow.open(editUrl, 'NSEditRecordWindow_' + Date.now(), winFeatures);
+              const editWin = outlookWindow.open(editUrl, 'NSEditRecordWindow_' + Date.now(), winFeatures);
+              if (editWin && !editWin.closed) {
+                editWin.focus();
+                e.preventDefault();
+                return;
+              }
             } catch (err) {}
 
-            if (!editWin) {
-              try {
-                const rootWin = window.opener || window;
-                editWin = rootWin.open(editUrl, 'NSEditRecordWindow_' + Date.now(), winFeatures);
-              } catch (err) {}
-            }
-
-            if (editWin) {
-              editWin.focus();
-            } else {
-              window.open(editUrl, '_blank');
-            }
+            try {
+              const rootWin = window.opener || window;
+              const editWin = rootWin.open(editUrl, 'NSEditRecordWindow_' + Date.now(), winFeatures);
+              if (editWin && !editWin.closed) {
+                editWin.focus();
+                e.preventDefault();
+                return;
+              }
+            } catch (err) {}
           };
         });
 

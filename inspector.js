@@ -66,11 +66,13 @@
         if (window.opener && window.opener.location && window.opener.location.origin && window.opener.location.origin !== 'null') {
           return window.opener.location.origin;
         }
+      } catch (e) {}
+      try {
         if (window.location && window.location.origin && window.location.origin !== 'null') {
           return window.location.origin;
         }
       } catch (e) {}
-      return '';
+      return 'https://3940793.app.netsuite.com';
     }
 
     function toAbsoluteNsUrl(url) {
@@ -105,7 +107,7 @@
     window.addEventListener('pagehide', saveWindowGeometry);
     setInterval(saveWindowGeometry, 1500);
 
-    /* Text-Only Highlighter Styles */
+    /* Text-Only Highlighter Styles (Zero Container Disruption) */
     function ensureBoardStyles(doc) {
       if (!doc) return;
       let s = doc.getElementById('ns-inspector-board-styles');
@@ -736,30 +738,20 @@
         };
       });
 
-      /* Reliable PiP Window Click Handler (Preserves In-Window User Gesture Activation) */
-      listContainer.querySelectorAll('a[data-nav-url]').forEach(a => {
+      /* Reliable Multi-Target Opener for PiP Links */
+      listContainer.querySelectorAll('.ns-pip-action-link, a[data-nav-url]').forEach(a => {
         a.onclick = (e) => {
           const targetUrl = a.getAttribute('data-nav-url') || a.getAttribute('href');
           if (!targetUrl || targetUrl === 'javascript:void(0)' || targetUrl.startsWith('#')) return;
 
-          e.preventDefault();
-          e.stopPropagation();
-
-          let opened = null;
           try {
-            if (win && !win.closed) {
-              opened = win.open(targetUrl, '_blank');
+            const rootWin = window.opener?.opener || window.opener || window;
+            if (rootWin && !rootWin.closed) {
+              rootWin.open(targetUrl, '_blank');
+              e.preventDefault();
+              return;
             }
           } catch (err) {}
-
-          if (!opened) {
-            try {
-              const rootWin = window.opener || window;
-              if (rootWin && !rootWin.closed) {
-                opened = rootWin.open(targetUrl, '_blank');
-              }
-            } catch (err) {}
-          }
         };
       });
 
@@ -1102,10 +1094,12 @@
       return false;
     }
 
-    /* Isolated Event Attendance Parsing with Comprehensive Edit URL Normalization */
+    /* Resilient Event Attendance Parsing */
     async function getAllAttendance(clientId) {
       if (cache.eventAttendance.has(clientId)) return cache.eventAttendance.get(clientId);
-      const res = await fetch('/app/common/entity/custjob.nl?id=${clientId}&selectedtab=custom26');
+
+      // Backtick string interpolation
+      const res = await fetch(`/app/common/entity/custjob.nl?id=${clientId}&selectedtab=custom26`);
       const html = await res.text();
       const mainDoc = new DOMParser().parseFromString(html, 'text/html');
       const allDocs = [mainDoc];
@@ -1138,120 +1132,86 @@
 
       const results = [];
       allDocs.forEach(d => {
-        let candidateTables = Array.from(d.querySelectorAll('table[id*="mge_event_client"], table[data-machine="recmachcustrecord_mge_event_client"]'));
-        if (!candidateTables.length) {
-          candidateTables = Array.from(d.querySelectorAll('table')).filter(tbl => {
-            const tid = (tbl.id || '').toLowerCase();
-            return !/usernotes|messages|activities|media|contacts__splits|address|calls|tasks/i.test(tid);
-          });
-        }
+        d.querySelectorAll('a[href*="contact.nl?id="], a[href*="/entity/contact.nl?id="]').forEach(cLink => {
+          const row = cLink.closest('tr');
+          if (!row || row.querySelector('th')) return;
 
-        candidateTables.forEach(tbl => {
-          let colMap = { status: -1, date: -1, title: -1, pos: -1 };
-          const headerRow = tbl.querySelector('tr.uir-list-header-tr, tr[id*="header"], tr:has(th), tr:has(td.listheadertd)');
-          if (headerRow) {
-            Array.from(headerRow.children).forEach((cell, idx) => {
-              const hTxt = (cell.innerText || cell.textContent || '').trim().toLowerCase();
-              if (hTxt.includes('status')) colMap.status = idx;
-              else if (hTxt.includes('date')) colMap.date = idx;
-              else if (hTxt.includes('event') || hTxt.includes('seminar') || hTxt.includes('title') || hTxt.includes('course')) colMap.title = idx;
-              else if (hTxt.includes('position') || hTxt.includes('job') || hTxt.includes('post')) colMap.pos = idx;
-            });
+          // Exclude notes, messages, activities, media, and general directory contact lists
+          const tbl = row.closest('table');
+          if (tbl && tbl.id && /usernotes|messages|activities|media|contacts?_?splits|address|calls|tasks/i.test(tbl.id)) return;
+
+          const contactName = (cLink.innerText || cLink.textContent || '').trim();
+          const contactId = cLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] || '';
+          if (!contactName) return;
+
+          // Extract NetSuite Edit URL
+          let rowEditUrl = '';
+          const allRowLinks = Array.from(row.querySelectorAll('a'));
+          for (const a of allRowLinks) {
+            const txt = (a.innerText || a.textContent || '').trim().toLowerCase();
+            const href = a.getAttribute('href') || '';
+            const onclick = a.getAttribute('onclick') || '';
+            const combined = href + ' ' + onclick;
+
+            if (txt === 'edit' || combined.includes('custrecordentry.nl') || combined.includes('&e=T')) {
+              const mCust = combined.match(/(?:https?:\/\/[^\s'"]+)?(?:\/app\/common\/custom\/|\.\.\/custom\/|custom\/)?(custrecordentry\.nl\?[^'"\s\)]+)/i);
+              if (mCust) {
+                let q = mCust[1].replace(/&amp;/g, '&');
+                if (!q.startsWith('/app/common/custom/')) q = '/app/common/custom/' + q;
+                if (!q.includes('&e=T')) q += '&e=T';
+                rowEditUrl = q;
+                break;
+              }
+              const mApp = combined.match(/\/app\/[^\s'"\)]+/);
+              if (mApp) {
+                let q = mApp[0].replace(/&amp;/g, '&');
+                if (!q.includes('&e=T') && !q.includes('contact.nl')) q += '&e=T';
+                rowEditUrl = q;
+                break;
+              }
+            }
           }
 
-          tbl.querySelectorAll('a[href*="contact.nl?id="], a[href*="/entity/contact.nl?id="]').forEach(cLink => {
-            const row = cLink.closest('tr');
-            if (!row || row.querySelector('th') || row === headerRow) return;
+          if (!rowEditUrl && contactId) {
+            rowEditUrl = '/app/common/entity/contact.nl?id=' + contactId + '&e=T';
+          }
 
-            const contactName = (cLink.innerText || cLink.textContent || '').trim();
-            const contactId = cLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] || '';
-            if (!contactName) return;
+          let attendanceDate = '';
+          let attendanceStatus = '';
+          let seminarTitle = '';
 
-            let rowEditUrl = '';
-            row.querySelectorAll('a').forEach(a => {
-              if (rowEditUrl) return;
-              const href = a.getAttribute('href') || '';
-              const onclick = a.getAttribute('onclick') || '';
-              const txt = (a.innerText || a.textContent || '').trim().toLowerCase();
-              const combined = href + ' ' + onclick;
+          row.querySelectorAll('td').forEach(cell => {
+            if (cell.contains(cLink)) return;
+            const text = (cell.innerText || cell.textContent || '').replace(/\s+/g, ' ').trim();
+            if (!text || /^(edit|view)$/i.test(text)) return;
 
-              if (txt === 'edit' || combined.includes('custrecordentry.nl') || combined.includes('&e=T')) {
-                const mCust = combined.match(/(?:https?:\/\/[^\s'"]+)?(?:\/app\/common\/custom\/|\.\.\/custom\/|custom\/)?(custrecordentry\.nl\?[^'"]+)/i);
-                if (mCust) {
-                  let q = mCust[1].replace(/&amp;/g, '&');
-                  if (!q.startsWith('/app/common/custom/')) q = '/app/common/custom/' + q;
-                  if (!q.includes('&e=T')) q += '&e=T';
-                  rowEditUrl = q;
-                  return;
-                }
-                const mApp = combined.match(/\/app\/[^\s'"]+/);
-                if (mApp) {
-                  let q = mApp[0].replace(/&amp;/g, '&');
-                  if (!q.includes('&e=T') && !q.includes('contact.nl')) q += '&e=T';
-                  rowEditUrl = q;
-                }
-              }
-            });
-
-            if (!rowEditUrl && contactId) {
-              rowEditUrl = '/app/common/entity/contact.nl?id=' + contactId + '&e=T';
-            }
-
-            const cells = Array.from(row.querySelectorAll('td'));
-            let attendanceStatus = '';
-            let attendanceDate = '';
-            let seminarTitle = '';
-            let positionText = '';
-
-            if (colMap.pos !== -1 && cells[colMap.pos]) {
-              positionText = (cells[colMap.pos].innerText || cells[colMap.pos].textContent || '').replace(/\s+/g, ' ').trim();
-            }
-            if (colMap.status !== -1 && cells[colMap.status]) {
-              const sTxt = (cells[colMap.status].innerText || cells[colMap.status].textContent || '').replace(/\s+/g, ' ').trim();
-              if (!/^(edit|view)$/i.test(sTxt)) attendanceStatus = sTxt;
-            }
-            if (colMap.date !== -1 && cells[colMap.date]) {
-              attendanceDate = (cells[colMap.date].innerText || cells[colMap.date].textContent || '').replace(/\s+/g, ' ').trim();
-            }
-            if (colMap.title !== -1 && cells[colMap.title]) {
-              const tTxt = (cells[colMap.title].innerText || cells[colMap.title].textContent || '').replace(/\s+/g, ' ').trim();
-              if (!/^(edit|view)$/i.test(tTxt)) seminarTitle = tTxt;
-            }
-
-            cells.forEach(cell => {
-              if (cell.contains(cLink)) return;
-              const text = (cell.innerText || cell.textContent || '').replace(/\s+/g, ' ').trim();
-              if (!text || /^(edit|view)$/i.test(text)) return;
-
-              if (!attendanceDate && /\b\d{1,2}-[A-Za-z]{3}-\d{2,4}\b|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i.test(text)) {
-                attendanceDate = text;
-              } else if (!attendanceStatus && /\b(scheduled|rescheduled|re-scheduled|resched|attended|confirmed|cancell?ed|no[-\s]?show|noshow|ns|registered|enrolled|waitlist(ed)?|wait[-\s]?list|completed|invited|declined|tentative|pending|standby|present|did not attend|absent)\b/i.test(text)) {
-                attendanceStatus = text;
-              } else if (!seminarTitle && text.length > 4) {
-                const isStatusWord = /\b(scheduled|rescheduled|confirmed|cancell?ed|no[-\s]?show|attended|completed|waitlist|registered)\b/i.test(text);
-                const isJobTitle = positionText && text.toLowerCase() === positionText.toLowerCase();
-                if (!isStatusWord && !isJobTitle && !/^\d+$/.test(text)) {
-                  seminarTitle = text;
-                }
-              }
-            });
-
-            if (attendanceDate && (seminarTitle || attendanceStatus || rowEditUrl)) {
-              const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}`;
-              if (!results.some(r => r.compoundKey === compoundKey)) {
-                results.push({ 
-                  contactName, 
-                  contactId, 
-                  eventTitle: seminarTitle, 
-                  date: attendanceDate, 
-                  status: attendanceStatus || 'Scheduled', 
-                  editUrl: rowEditUrl,
-                  position: positionText,
-                  compoundKey 
-                });
+            if (!attendanceDate && /\b\d{1,2}-[A-Za-z]{3}-\d{2,4}\b|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i.test(text)) {
+              attendanceDate = text;
+            } else if (!attendanceStatus && /\b(scheduled|rescheduled|re-scheduled|resched|attended|confirmed|cancell?ed|no[-\s]?show|noshow|ns|registered|enrolled|waitlist(ed)?|wait[-\s]?list|completed|invited|declined|tentative|pending|standby|present|did not attend|absent)\b/i.test(text)) {
+              attendanceStatus = text;
+            } else if (!seminarTitle && text.length > 4) {
+              const isStatusWord = /\b(scheduled|rescheduled|confirmed|cancell?ed|no[-\s]?show|attended|completed|waitlist|registered)\b/i.test(text);
+              if (!isStatusWord && !/^\d+$/.test(text) && !/^(yes|no|none)$/i.test(text)) {
+                seminarTitle = text;
               }
             }
           });
+
+          // Ensure genuine event records have an attendance date
+          if (attendanceDate && (seminarTitle || attendanceStatus || rowEditUrl)) {
+            const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}`;
+            if (!results.some(r => r.compoundKey === compoundKey)) {
+              results.push({ 
+                contactName, 
+                contactId, 
+                eventTitle: seminarTitle, 
+                date: attendanceDate, 
+                status: attendanceStatus || 'Scheduled', 
+                editUrl: rowEditUrl,
+                compoundKey 
+              });
+            }
+          }
         });
       });
 
@@ -1769,10 +1729,13 @@
             ? allAttendance.filter(item => {
                 const itemDate = normalizeDate(item.date);
                 const validDates = boardEvent.allNormDates || [];
-                if (itemDate && validDates.length > 0 && !validDates.includes(itemDate)) return false;
                 const sig = getCanonicalKey(item.eventTitle, item.date);
-                if (boardEvent.coreName && sig.coreName && (boardEvent.coreName.includes(sig.coreName) || sig.coreName.includes(boardEvent.coreName))) return true;
-                return Boolean(itemDate && validDates.includes(itemDate));
+
+                const isTitleMatch = Boolean(boardEvent.coreName && sig.coreName &&
+                  (boardEvent.coreName.includes(sig.coreName) || sig.coreName.includes(boardEvent.coreName)));
+                const isDateMatch = Boolean(itemDate && validDates.includes(itemDate));
+
+                return isTitleMatch || isDateMatch;
               })
             : allAttendance;
 

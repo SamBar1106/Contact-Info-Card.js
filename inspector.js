@@ -123,7 +123,6 @@
         const targetDoc = el.ownerDocument || window.opener?.document || document;
         ensureBoardStyles(targetDoc);
 
-        // Clear previous highlights
         targetDoc.querySelectorAll('.ns-inspector-active-highlight').forEach(node => {
           node.classList.remove('ns-inspector-active-highlight');
           node.style.removeProperty('background-color');
@@ -139,7 +138,6 @@
           node.style.removeProperty('transform');
         });
 
-        // Pinpoint only the name text element, not the whole table cell
         let target = el.querySelector('.attendeeName') || 
                      el.closest('.attendeeName') || 
                      el.querySelector('a[href*="contact.nl"]') || 
@@ -159,8 +157,6 @@
         if (!target) target = el;
 
         target.classList.add('ns-inspector-active-highlight');
-
-        // Apply direct inline highlighter styles
         target.style.setProperty('background-color', '#fef08a', 'important');
         target.style.setProperty('color', '#000000', 'important');
         target.style.setProperty('padding', '1px 4px', 'important');
@@ -568,7 +564,7 @@
 
     /* Status Badge Resolver with Priority Matching for Rescheduled, No Show & All Statuses */
     function getStatusBadge(status) {
-      if (!status) return '';
+      if (!status || /^(edit|view)$/i.test(status.trim())) return '';
       const s = status.trim().toLowerCase();
       let bg = 'rgba(255, 255, 255, 0.08)', color = 'rgb(228, 228, 231)', border = 'rgba(255, 255, 255, 0.18)';
 
@@ -630,12 +626,15 @@
           cardBorder = 'border-left: 3px solid rgb(192, 132, 252) !important;';
         }
 
+        const editTargetUrl = item.editUrl || (item.contactId ? '/app/common/entity/contact.nl?id=' + item.contactId + '&e=T' : '');
+
         return `
           <div class="glass-card card-contact" style="padding:10px 12px; ${cardBorder}" data-event-card="${item.contactId || item.contactName}">
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <a href="${item.contactId ? '/app/common/entity/contact.nl?id=' + item.contactId : 'javascript:void(0)'}" target="_blank" style="font-weight:700; font-size:14px; color:white;">${item.contactName}</a>
               <div style="display:flex; align-items:center; gap:4px;">
                 ${item.contactId ? `<span class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border-color:rgba(192,132,252,0.4);" data-pdf-contact="${item.contactId}" data-pdf-name="${item.contactName}">📄 PDF</span>` : ''}
+                ${editTargetUrl ? `<a href="${editTargetUrl}" target="_blank" class="pill" style="cursor:pointer; background:rgba(255, 255, 255, 0.12); color:rgb(244, 244, 245); border-color:rgba(255, 255, 255, 0.35); text-decoration:none;" title="Open Record in Edit Mode">EDIT ↗</a>` : ''}
                 ${getStatusBadge(item.status || 'Status Unknown')}
               </div>
             </div>
@@ -655,6 +654,18 @@
             activeContactName = cNm;
             activePdfUrl = '/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + cId;
             openPdfPiP();
+          }
+        };
+      });
+
+      // Bind PiP edit links directly to opener window
+      listContainer.querySelectorAll('a[href]').forEach(a => {
+        a.onclick = (e) => {
+          e.stopPropagation();
+          const url = a.getAttribute('href');
+          if (url && url !== 'javascript:void(0)') {
+            window.open(url, '_blank');
+            e.preventDefault();
           }
         };
       });
@@ -998,7 +1009,7 @@
       return false;
     }
 
-    /* Column Header-Guided Attendance Parsing with Comprehensive Status Detection */
+    /* Column-Aware Attendance Parsing with Edit URL Extraction */
     async function getAllAttendance(clientId) {
       if (cache.eventAttendance.has(clientId)) return cache.eventAttendance.get(clientId);
       const res = await fetch(`/app/common/entity/custjob.nl?id=${clientId}&selectedtab=custom26`);
@@ -1056,19 +1067,37 @@
             const contactId = cLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] || '';
             if (!contactName) return;
 
+            // Extract connected NetSuite Edit URL from row
+            let rowEditUrl = '';
+            const editA = Array.from(row.querySelectorAll('a')).find(a => {
+              const t = (a.innerText || a.textContent || '').trim().toLowerCase();
+              const h = a.getAttribute('href') || '';
+              return t === 'edit' || h.includes('&e=T') || h.includes('custrecordentry.nl');
+            }) || row.querySelector('a[href*="custrecordentry.nl"], a[href*="&e=T"]');
+
+            if (editA) {
+              const href = editA.getAttribute('href') || '';
+              const onclick = editA.getAttribute('onclick') || '';
+              const m = (href + ' ' + onclick).match(/(?:https?:\/\/[^\s'"]+)?(\/app\/[^\s'"]+)/);
+              if (m) rowEditUrl = m[1];
+              else if (href && !href.startsWith('javascript:')) rowEditUrl = href;
+            }
+
             const cells = Array.from(row.querySelectorAll('td'));
             let attendanceStatus = '';
             let attendanceDate = '';
             let seminarTitle = '';
 
             if (colMap.status !== -1 && cells[colMap.status]) {
-              attendanceStatus = (cells[colMap.status].innerText || cells[colMap.status].textContent || '').replace(/\s+/g, ' ').trim();
+              const sTxt = (cells[colMap.status].innerText || cells[colMap.status].textContent || '').replace(/\s+/g, ' ').trim();
+              if (!/^(edit|view)$/i.test(sTxt)) attendanceStatus = sTxt;
             }
             if (colMap.date !== -1 && cells[colMap.date]) {
               attendanceDate = (cells[colMap.date].innerText || cells[colMap.date].textContent || '').replace(/\s+/g, ' ').trim();
             }
             if (colMap.title !== -1 && cells[colMap.title]) {
-              seminarTitle = (cells[colMap.title].innerText || cells[colMap.title].textContent || '').replace(/\s+/g, ' ').trim();
+              const tTxt = (cells[colMap.title].innerText || cells[colMap.title].textContent || '').replace(/\s+/g, ' ').trim();
+              if (!/^(edit|view)$/i.test(tTxt)) seminarTitle = tTxt;
             }
 
             cells.forEach(cell => {
@@ -1088,7 +1117,7 @@
               }
             });
 
-            if (seminarTitle || attendanceDate || attendanceStatus) {
+            if (seminarTitle || attendanceDate || attendanceStatus || rowEditUrl) {
               const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}_${attendanceStatus}`;
               if (!results.some(r => r.compoundKey === compoundKey)) {
                 results.push({ 
@@ -1097,6 +1126,7 @@
                   eventTitle: seminarTitle, 
                   date: attendanceDate, 
                   status: attendanceStatus || 'Scheduled', 
+                  editUrl: rowEditUrl,
                   compoundKey 
                 });
               }
@@ -1271,15 +1301,21 @@
 
               if (eventBox && eventItems) {
                 eventBox.style.display = 'block';
-                eventItems.innerHTML = matches.map((m, idx) => `
-                  <div style="${idx > 0 ? 'border-top:1px solid rgba(251,191,36,0.2); padding-top:5px;' : ''}">
-                    <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
-                      <span style="font-weight:700; color:#fff; font-size:12px;">${m.eventTitle || 'Linked Seminar'}</span>
-                      ${getStatusBadge(m.status)}
+                eventItems.innerHTML = matches.map((m, idx) => {
+                  const editTargetUrl = m.editUrl || (m.contactId ? '/app/common/entity/contact.nl?id=' + m.contactId + '&e=T' : '');
+                  return `
+                    <div style="${idx > 0 ? 'border-top:1px solid rgba(251,191,36,0.2); padding-top:5px;' : ''}">
+                      <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+                        <span style="font-weight:700; color:#fff; font-size:12px;">${m.eventTitle || 'Linked Seminar'}</span>
+                        <div style="display:flex; align-items:center; gap:4px;">
+                          ${editTargetUrl ? `<a href="${editTargetUrl}" target="_blank" class="pill" style="cursor:pointer; background:rgba(255, 255, 255, 0.12); color:rgb(244, 244, 245); border-color:rgba(255, 255, 255, 0.35); text-decoration:none;" title="Open Record in Edit Mode">EDIT ↗</a>` : ''}
+                          ${getStatusBadge(m.status)}
+                        </div>
+                      </div>
+                      <div style="font-size:11px; color:rgb(251, 191, 36); margin-top:2px;">${m.date || 'This Week'}</div>
                     </div>
-                    <div style="font-size:11px; color:rgb(251, 191, 36); margin-top:2px;">${m.date || 'This Week'}</div>
-                  </div>
-                `).join('');
+                  `;
+                }).join('');
               }
             } else {
               seminarPill.style.display = 'none';

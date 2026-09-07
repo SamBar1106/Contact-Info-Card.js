@@ -30,7 +30,6 @@
     return;
   }
 
-  // Force reconnect opener reference to current NetSuite tab
   try { popup.opener = window; } catch(e) {}
   popup.focus();
 
@@ -198,7 +197,6 @@
       }
     }
 
-    // Clean up highlights and detach handler when inspector closes
     window.addEventListener('pagehide', () => {
       try {
         const oWin = window.opener;
@@ -235,8 +233,7 @@
         overflow: hidden; background: rgb(18, 18, 20);
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
         font-size: 13px; color: rgb(244, 244, 245);
-        user-select: text !important;
-        -webkit-user-select: text !important;
+        user-select: text !important; -webkit-user-select: text !important;
       }
       ::-webkit-scrollbar { width: 5px; height: 5px; }
       ::-webkit-scrollbar-track { background: transparent; }
@@ -912,13 +909,14 @@
 
       const data = {
         companyName: resolvedCompany,
-        workPhone: safeLookupSS1('customer', clientInternalId, 'phone') || getNetSuiteViewField(doc, 'phone', ['Work Phone', 'Phone']) || html.match(/id=["']phone_val["'][^>]*>([^<]+)</i)?.[1]?.trim() || '',
-        email: safeLookupSS1('customer', clientInternalId, 'email') || getNetSuiteViewField(doc, 'email', ['Email']) || html.match(/id=["']email_val["'][^>]*>([^<]+)</i)?.[1]?.trim() || '',
+        workPhone: safeLookupSS1('customer', clientInternalId, 'phone') || getNetSuiteViewField(doc, 'phone', ['Work Phone', 'Phone', 'Main Phone']) || html.match(/id=["']phone_val["'][^>]*>([^<]+)</i)?.[1]?.trim() || '',
+        email: safeLookupSS1('customer', clientInternalId, 'email') || getNetSuiteViewField(doc, 'email', ['Email', 'Primary Email']) || html.match(/id=["']email_val["'][^>]*>([^<]+)</i)?.[1]?.trim() || '',
         comments: safeLookupSS1('customer', clientInternalId, 'comments') || getNetSuiteViewField(doc, 'comments', ['Comments']) || 'None recorded',
         cell1Phone: safeLookupSS1('customer', clientInternalId, 'mobilephone') || getNetSuiteViewField(doc, 'mobilephone', ['Cell Phone 1']) || '',
         cell1Name: safeLookupSS1('customer', clientInternalId, 'custentity3') || getNetSuiteViewField(doc, 'custentity3', ['Cell 1 Name']) || '',
         cell2Phone: safeLookupSS1('customer', clientInternalId, 'custentitycellphone2') || getNetSuiteViewField(doc, 'custentitycellphone2', ['Cell Phone 2']) || '',
         cell2Name: safeLookupSS1('customer', clientInternalId, 'custentitycell2name') || getNetSuiteViewField(doc, 'custentitycell2name', ['Cell 2 Name']) || '',
+        doc,
         notes
       };
 
@@ -1103,11 +1101,10 @@
       return false;
     }
 
-    /* Fixed Event Attendance Parsing with Valid URL Interpolation */
+    /* Resilient Event Attendance Parsing */
     async function getAllAttendance(clientId) {
       if (cache.eventAttendance.has(clientId)) return cache.eventAttendance.get(clientId);
 
-      // Backtick string interpolation correctly resolves customer ID
       const res = await fetch(`/app/common/entity/custjob.nl?id=${clientId}&selectedtab=custom26`);
       const html = await res.text();
       const mainDoc = new DOMParser().parseFromString(html, 'text/html');
@@ -1192,11 +1189,13 @@
             const text = (cell.innerText || cell.textContent || '').replace(/\s+/g, ' ').trim();
             if (!text || /^(edit|view)$/i.test(text)) return;
 
-            if (!attendanceDate && /\b\d{1,2}-[A-Za-z]{3}-\d{2,4}\b|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i.test(text)) {
+            const isPureDate = text.length < 25 && /\b\d{1,2}-[A-Za-z]{3}-\d{2,4}\b|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i.test(text);
+
+            if (!attendanceDate && isPureDate) {
               attendanceDate = text;
             } else if (!attendanceStatus && /\b(scheduled|rescheduled|re-scheduled|resched|attended|confirmed|cancell?ed|no[-\s]?show|noshow|ns|registered|enrolled|waitlist(ed)?|wait[-\s]?list|completed|invited|declined|tentative|pending|standby|present|did not attend|absent)\b/i.test(text)) {
               attendanceStatus = text;
-            } else if (!seminarTitle && text.length > 4) {
+            } else if (!seminarTitle && text.length > 5) {
               const isStatusWord = /\b(scheduled|rescheduled|confirmed|cancell?ed|no[-\s]?show|attended|completed|waitlist|registered)\b/i.test(text);
               if (!isStatusWord && !/^\d+$/.test(text) && !/^(yes|no|none)$/i.test(text)) {
                 seminarTitle = text;
@@ -1204,7 +1203,7 @@
             }
           });
 
-          if (attendanceDate && (seminarTitle || attendanceStatus || rowEditUrl)) {
+          if ((attendanceDate || seminarTitle) && (seminarTitle || attendanceStatus || rowEditUrl)) {
             const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}`;
             if (!results.some(r => r.compoundKey === compoundKey)) {
               results.push({ 
@@ -1510,7 +1509,7 @@
       fetchAttendeeRecord(attendee);
     }
 
-    /* Multi-Strategy Client & Contact Resolver for Event Mode */
+    /* Multi-Strategy Client & Contact Resolver with Colon Extraction */
     async function resolveEventClientAndContact(eventTarget, clickedCell, tr) {
       let detectedContactId = null;
       let clientInternalId = null;
@@ -1525,8 +1524,11 @@
 
       const candidates = [clickedCell, eventTarget, tr].filter(Boolean);
       for (const el of candidates) {
+        const cId = el.getAttribute('data-contactid') || el.dataset?.contactid;
+        if (cId && /^\d+$/.test(cId) && !detectedContactId) detectedContactId = cId;
+
         const id = el.getAttribute('data-clientid') || el.getAttribute('data-customerid') || el.dataset?.clientid || el.dataset?.customerid;
-        if (id && /^\d+$/.test(id)) { clientInternalId = id; break; }
+        if (id && /^\d+$/.test(id) && !clientInternalId) clientInternalId = id;
       }
 
       if (!clientInternalId && tr) {
@@ -1590,17 +1592,26 @@
       highlightBoardElement(eventTarget);
 
       const nameEl = clickedCell.querySelector('.attendeeName') || clickedCell.closest('.attendeeName') || clickedCell;
-      let cleanAttendeeName = '';
+      let rawText = '';
       if (nameEl) {
         const clone = nameEl.cloneNode(true);
         clone.querySelectorAll('.attendeeCount, i, span, svg').forEach(s => s.remove());
-        cleanAttendeeName = (clone.innerText || clone.textContent || '').trim().replace(/\s+/g, ' ');
+        rawText = (clone.innerText || clone.textContent || '').trim().replace(/\s+/g, ' ');
       }
-      if (!cleanAttendeeName) cleanAttendeeName = (clickedCell.innerText || clickedCell.textContent || '').trim();
+      if (!rawText) rawText = (clickedCell.innerText || clickedCell.textContent || '').trim();
+
+      // Cleanly separate Client Name and Attendee Name across colon format
+      let clientParsedName = '';
+      let attendeeParsedName = rawText.replace(/\(\d+\)/g, '').trim();
+      if (rawText.includes(':')) {
+        const parts = rawText.split(':');
+        clientParsedName = parts[0].trim();
+        attendeeParsedName = parts.slice(1).join(':').replace(/\(\d+\)/g, '').trim();
+      }
 
       const schedDatesHtml = getAttendeeDates(tr || clickedCell);
       const boardEvent = findBoardEvent(clickedCell);
-      const eventDisplayHeader = boardEvent ? boardEvent.rawText : (cleanAttendeeName + ' Seminar');
+      const eventDisplayHeader = boardEvent ? boardEvent.rawText : (rawText + ' Seminar');
 
       const isNoShow = !!(clickedCell.querySelector('.isNoShow') || /\bstatus(noshow|no-show|ns)\b/i.test(clickedCell.className) || /\bno[-\s]?show\b/i.test(clickedCell.innerText || ''));
       const isResched = !!(clickedCell.querySelector('.isResched') || /\bstatus(resched|rsch)\b/i.test(clickedCell.className) || /\bre[-\s]?sched(ule|uled)?\b/i.test(clickedCell.innerText || ''));
@@ -1617,16 +1628,16 @@
 
       activeAttendeeId = null;
       activeContactId = null;
-      activeContactName = cleanAttendeeName || '';
+      activeContactName = attendeeParsedName || rawText;
       activePdfUrl = '';
       cachedMatchingSeminars = null;
 
-      setPdfPiPLoading(cleanAttendeeName);
+      setPdfPiPLoading(attendeeParsedName);
 
       const eventBox = document.getElementById('ns-insp-linked-event-box');
       if (eventBox) eventBox.style.display = 'none';
 
-      document.getElementById('ns-insp-contact-name').textContent = cleanAttendeeName || 'Event Attendee(s)';
+      document.getElementById('ns-insp-contact-name').textContent = attendeeParsedName || 'Event Attendee';
       document.getElementById('ns-insp-position').textContent = 'Seminar Participant';
       document.getElementById('ns-insp-contact-phone').innerHTML = '...';
       document.getElementById('ns-insp-contact-email').innerHTML = '...';
@@ -1635,7 +1646,7 @@
       const dateBlock = (boardEvent && boardEvent.dateStr) ? `<div>${boardEvent.dateStr}</div>` : schedDatesHtml;
       document.getElementById('ns-insp-sched-day').innerHTML = `${dateBlock}${fallbackStatus ? `<div style="margin-top:4px;">${getStatusBadge(fallbackStatus)}</div>` : ''}`;
 
-      document.getElementById('ns-insp-full-client').textContent = 'Resolving client...';
+      document.getElementById('ns-insp-full-client').textContent = clientParsedName || 'Resolving client...';
       document.getElementById('ns-insp-work-phone').innerHTML = '...';
       document.getElementById('ns-insp-email').innerHTML = '...';
       document.getElementById('ns-insp-cell-1').innerHTML = '...';
@@ -1651,48 +1662,47 @@
       if (win) {
         const d = win.document;
         d.getElementById('pip-event-title').textContent = eventDisplayHeader;
-        d.getElementById('pip-event-client').textContent = 'Client: ' + cleanAttendeeName;
+        d.getElementById('pip-event-client').textContent = 'Client: ' + (clientParsedName || rawText);
         d.getElementById('pip-event-dates').innerHTML = dateBlock;
         d.getElementById('pip-contacts-count').textContent = 'Querying...';
         d.getElementById('pip-event-contacts-list').innerHTML = '<div style="color:rgb(161, 161, 170);">Querying records...</div>';
       }
 
-      const { clientInternalId, detectedContactId, clientDisplayText } = await resolveEventClientAndContact(eventTarget, clickedCell, tr);
+      let { clientInternalId, detectedContactId, clientDisplayText } = await resolveEventClientAndContact(eventTarget, clickedCell, tr);
       activeClientInternalId = clientInternalId;
       document.getElementById('ns-insp-pill-id').textContent = clientInternalId ? ('Client ID: ' + clientInternalId) : 'Event Mode';
 
-      if (detectedContactId) {
-        activeContactId = detectedContactId;
+      function applyContactToUi(cId, cData) {
+        activeContactId = cId;
+        activeContactName = cData.name || attendeeParsedName;
+        document.getElementById('ns-insp-contact-name').textContent = activeContactName;
+        document.getElementById('ns-insp-position').textContent = cData.position || 'Seminar Participant';
+        document.getElementById('ns-insp-contact-phone').innerHTML = cData.phone ? `<a href="tel:${cData.phone}">${cData.phone}</a>` : '-';
+        document.getElementById('ns-insp-contact-comments').textContent = cData.comments || 'None recorded';
+
+        if (cData.email) {
+          const rawSched = document.getElementById('ns-insp-sched-day')?.innerText.trim() || 'Scheduled Dates';
+          const isDoctor = (cData.position || '').toLowerCase().includes('doctor');
+          const greetingName = isDoctor && !/^dr\./i.test(activeContactName) ? `Dr. ${activeContactName}` : activeContactName;
+          const subject = encodeURIComponent('Checking In: Travel Plans for MGE Course Sessions');
+          const body = encodeURIComponent(`Hello ${greetingName},\n\nI hope you're doing well.\n\nI have you scheduled for the course room on the following dates:\n\n${rawSched}\n\nI wanted to check in and see if you've been able to make your flight and hotel reservations yet. Please let me know if you need any assistance with your travel plans.\n\nI look forward to hearing from you.`);
+          document.getElementById('ns-insp-contact-email').innerHTML = `<a href="mailto:${cData.email.trim()}?subject=${subject}&body=${body}">${cData.email}</a>`;
+        } else {
+          document.getElementById('ns-insp-contact-email').innerHTML = '-';
+        }
+
         const btnContact = document.getElementById('ns-insp-btn-contact');
-        btnContact.href = toAbsoluteNsUrl('/app/common/entity/contact.nl?id=' + detectedContactId);
+        btnContact.href = toAbsoluteNsUrl('/app/common/entity/contact.nl?id=' + cId);
         btnContact.style.pointerEvents = 'auto';
         btnContact.style.opacity = '1';
 
-        activePdfUrl = toAbsoluteNsUrl('/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + detectedContactId);
+        activePdfUrl = toAbsoluteNsUrl('/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + cId);
         document.getElementById('ns-insp-btn-pdf').disabled = false;
+        updatePdfPiPIfOpen(activePdfUrl, activeContactName);
+      }
 
-        getContactData(detectedContactId).then(cData => {
-          activeContactName = cData.name || cleanAttendeeName;
-          document.getElementById('ns-insp-contact-name').textContent = activeContactName;
-          document.getElementById('ns-insp-position').textContent = cData.position || 'Seminar Participant';
-          document.getElementById('ns-insp-contact-phone').innerHTML = cData.phone ? `<a href="tel:${cData.phone}">${cData.phone}</a>` : '-';
-          document.getElementById('ns-insp-contact-comments').textContent = cData.comments || 'None recorded';
-
-          if (cData.email) {
-            const rawSched = document.getElementById('ns-insp-sched-day')?.innerText.trim() || 'Scheduled Dates';
-            const isDoctor = (cData.position || '').toLowerCase().includes('doctor');
-            const greetingName = isDoctor && !/^dr\./i.test(activeContactName) ? `Dr. ${activeContactName}` : activeContactName;
-            const subject = encodeURIComponent('Checking In: Travel Plans for MGE Course Sessions');
-            const body = encodeURIComponent(`Hello ${greetingName},\n\nI hope you're doing well.\n\nI have you scheduled for the course room on the following dates:\n\n${rawSched}\n\nI wanted to check in and see if you've been able to make your flight and hotel reservations yet. Please let me know if you need any assistance with your travel plans.\n\nI look forward to hearing from you.`);
-            document.getElementById('ns-insp-contact-email').innerHTML = `<a href="mailto:${cData.email.trim()}?subject=${subject}&body=${body}">${cData.email}</a>`;
-          } else {
-            document.getElementById('ns-insp-contact-email').innerHTML = '-';
-          }
-
-          updatePdfPiPIfOpen(activePdfUrl, activeContactName);
-        });
-      } else {
-        document.getElementById('ns-insp-contact-comments').textContent = 'Viewing seminar attendance in Document Picture-in-Picture window.';
+      if (detectedContactId) {
+        getContactData(detectedContactId).then(cData => applyContactToUi(detectedContactId, cData));
       }
 
       const btnClient = document.getElementById('ns-insp-btn-client');
@@ -1704,10 +1714,10 @@
         document.getElementById('ns-insp-btn-save-note').disabled = false;
 
         const capturedId = clientInternalId;
-        getClientData(capturedId, clientDisplayText || cleanAttendeeName).then(clientData => {
+        getClientData(capturedId, clientDisplayText || clientParsedName || rawText).then(clientData => {
           if (activeClientInternalId !== capturedId) return;
 
-          document.getElementById('ns-insp-full-client').textContent = clientData.companyName || cleanAttendeeName;
+          document.getElementById('ns-insp-full-client').textContent = clientData.companyName || clientParsedName || rawText;
           document.getElementById('ns-insp-work-phone').innerHTML = clientData.workPhone ? `<a href="tel:${clientData.workPhone}">${clientData.workPhone}</a>` : '-';
           document.getElementById('ns-insp-email').innerHTML = clientData.email ? `<a href="mailto:${clientData.email}">${clientData.email}</a>` : '-';
           document.getElementById('ns-insp-comments').textContent = clientData.comments || 'None recorded';
@@ -1726,6 +1736,20 @@
           }
           document.getElementById('ns-insp-client-fetch-status').textContent = 'Resolved';
           document.getElementById('ns-insp-client-fetch-status').style.color = 'rgb(52, 211, 153)';
+
+          // If contact ID was not in DOM, resolve contact by name from client page
+          if (!activeContactId && clientData.doc && attendeeParsedName) {
+            const cLinks = Array.from(clientData.doc.querySelectorAll('a[href*="contact.nl?id="], a[href*="/entity/contact.nl?id="]'));
+            const foundLink = cLinks.find(a => (a.innerText || a.textContent || '').trim().toLowerCase().includes(attendeeParsedName.toLowerCase())) ||
+                              cLinks.find(a => attendeeParsedName.toLowerCase().includes((a.innerText || a.textContent || '').trim().toLowerCase()));
+            if (foundLink) {
+              const cId = foundLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1];
+              if (cId) {
+                detectedContactId = cId;
+                getContactData(cId).then(cData => applyContactToUi(cId, cData));
+              }
+            }
+          }
         }).catch(() => {
           if (activeClientInternalId === capturedId) {
             document.getElementById('ns-insp-client-fetch-status').textContent = 'Error';
@@ -1736,7 +1760,7 @@
         getAllAttendance(capturedId).then(allAttendance => {
           if (activeClientInternalId !== capturedId) return;
 
-          const displayAttendance = boardEvent
+          const displayAttendance = (boardEvent && allAttendance.length > 0)
             ? allAttendance.filter(item => {
                 const itemDate = normalizeDate(item.date);
                 const validDates = boardEvent.allNormDates || [];
@@ -1746,47 +1770,63 @@
                   (boardEvent.coreName.includes(sig.coreName) || sig.coreName.includes(boardEvent.coreName)));
                 const isDateMatch = Boolean(itemDate && validDates.includes(itemDate));
 
+                if (attendeeParsedName && attendeeParsedName !== clientParsedName) {
+                  const isContactMatch = item.contactName.toLowerCase().includes(attendeeParsedName.toLowerCase()) ||
+                                         attendeeParsedName.toLowerCase().includes(item.contactName.toLowerCase());
+                  return (isTitleMatch || isDateMatch) && isContactMatch;
+                }
+
                 return isTitleMatch || isDateMatch;
               })
             : allAttendance;
 
+          // Seamless single-attendee synthetic fallback: Never show 0 attendees when clicking an attendee on the board
+          if (displayAttendance.length === 0 && attendeeParsedName) {
+            displayAttendance.push({
+              contactName: attendeeParsedName,
+              contactId: detectedContactId || '',
+              eventTitle: eventDisplayHeader,
+              date: (boardEvent && boardEvent.dateStr) ? boardEvent.dateStr : 'This Week',
+              status: fallbackStatus || 'Scheduled',
+              editUrl: detectedContactId ? `/app/common/entity/contact.nl?id=${detectedContactId}&e=T` : ''
+            });
+          }
+
           cachedMatchingSeminars = {
             list: displayAttendance,
             title: eventDisplayHeader,
-            clientName: cleanAttendeeName,
+            clientName: clientParsedName || rawText,
             dates: dateBlock
           };
-          renderSeminarInPiP(displayAttendance, eventDisplayHeader, cleanAttendeeName, dateBlock);
+          renderSeminarInPiP(displayAttendance, eventDisplayHeader, clientParsedName || rawText, dateBlock);
 
           if (!activeContactId && displayAttendance.length > 0) {
-            const matched = displayAttendance.find(i => cleanAttendeeName && i.contactName.toLowerCase().includes(cleanAttendeeName.toLowerCase())) || displayAttendance[0];
+            const matched = displayAttendance.find(i => attendeeParsedName && i.contactName.toLowerCase().includes(attendeeParsedName.toLowerCase())) || displayAttendance[0];
             if (matched && matched.contactId) {
-              activeContactId = matched.contactId;
-              activeContactName = matched.contactName;
-              activePdfUrl = toAbsoluteNsUrl('/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + matched.contactId);
-              document.getElementById('ns-insp-btn-pdf').disabled = false;
-              updatePdfPiPIfOpen(activePdfUrl, activeContactName);
-
-              getContactData(matched.contactId).then(cData => {
-                document.getElementById('ns-insp-contact-name').textContent = cData.name || matched.contactName;
-                document.getElementById('ns-insp-position').textContent = cData.position || 'Seminar Participant';
-                document.getElementById('ns-insp-contact-phone').innerHTML = cData.phone ? `<a href="tel:${cData.phone}">${cData.phone}</a>` : '-';
-                document.getElementById('ns-insp-contact-comments').textContent = cData.comments || 'None recorded';
-                if (cData.email) {
-                  document.getElementById('ns-insp-contact-email').innerHTML = `<a href="mailto:${cData.email.trim()}">${cData.email}</a>`;
-                }
-              });
+              getContactData(matched.contactId).then(cData => applyContactToUi(matched.contactId, cData));
             }
           }
         });
       } else {
-        document.getElementById('ns-insp-full-client').textContent = cleanAttendeeName || 'Client ID not detected';
+        document.getElementById('ns-insp-full-client').textContent = clientParsedName || rawText || 'Client ID not detected';
         document.getElementById('ns-insp-client-fetch-status').textContent = 'Not Found';
         document.getElementById('ns-insp-client-fetch-status').style.color = 'rgb(251, 191, 36)';
         document.getElementById('ns-insp-notes-list').innerHTML = '<div style="color:rgb(161, 161, 170);">Click attendee or client link directly to load client notes.</div>';
         btnClient.style.pointerEvents = 'none';
         btnClient.style.opacity = '0.35';
         document.getElementById('ns-insp-btn-save-note').disabled = true;
+
+        if (attendeeParsedName) {
+          const singleFallback = [{
+            contactName: attendeeParsedName,
+            contactId: detectedContactId || '',
+            eventTitle: eventDisplayHeader,
+            date: (boardEvent && boardEvent.dateStr) ? boardEvent.dateStr : 'This Week',
+            status: fallbackStatus || 'Scheduled',
+            editUrl: detectedContactId ? `/app/common/entity/contact.nl?id=${detectedContactId}&e=T` : ''
+          }];
+          renderSeminarInPiP(singleFallback, eventDisplayHeader, clientParsedName || rawText, dateBlock);
+        }
       }
     }
 
@@ -1919,10 +1959,8 @@
         if (oDoc && oDoc.body) {
           ensureBoardStyles(oDoc);
 
-          // Always point the parent page's active handler to THIS popup's click processor
           oWin.__nsInspectorActiveHandler = onBoardClick;
 
-          // Install parent listener only once; subsequent popups seamlessly take over the handler
           if (!oWin.__nsInspectorListenerInstalled) {
             oWin.__nsInspectorListenerInstalled = true;
             oDoc.addEventListener('click', function(e) {

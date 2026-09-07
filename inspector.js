@@ -30,10 +30,12 @@
     return;
   }
 
+  // Force reconnect opener reference to current NetSuite tab
+  try { popup.opener = window; } catch(e) {}
   popup.focus();
 
   if (popup.document && popup.document.getElementById('ns-main-app-container')) {
-    if (typeof popup.__nsRehookOpener === 'function') popup.__nsRehookOpener();
+    if (typeof popup.__nsRehookOpener === 'function') popup.__nsRehookOpener(window);
     return;
   }
 
@@ -196,24 +198,31 @@
       }
     }
 
+    // Clean up highlights and detach handler when inspector closes
     window.addEventListener('pagehide', () => {
       try {
-        const oDoc = window.opener?.document;
-        if (oDoc) {
-          oDoc.querySelectorAll('.ns-inspector-active-highlight').forEach(node => {
-            node.classList.remove('ns-inspector-active-highlight');
-            node.style.removeProperty('background-color');
-            node.style.removeProperty('color');
-            node.style.removeProperty('padding');
-            node.style.removeProperty('border-radius');
-            node.style.removeProperty('display');
-            node.style.removeProperty('box-decoration-break');
-            node.style.removeProperty('-webkit-box-decoration-break');
-            node.style.removeProperty('box-shadow');
-            node.style.removeProperty('outline');
-            node.style.removeProperty('outline-offset');
-            node.style.removeProperty('transform');
-          });
+        const oWin = window.opener;
+        if (oWin && !oWin.closed) {
+          if (oWin.__nsInspectorActiveHandler === onBoardClick) {
+            oWin.__nsInspectorActiveHandler = null;
+          }
+          const oDoc = oWin.document;
+          if (oDoc) {
+            oDoc.querySelectorAll('.ns-inspector-active-highlight').forEach(node => {
+              node.classList.remove('ns-inspector-active-highlight');
+              node.style.removeProperty('background-color');
+              node.style.removeProperty('color');
+              node.style.removeProperty('padding');
+              node.style.removeProperty('border-radius');
+              node.style.removeProperty('display');
+              node.style.removeProperty('box-decoration-break');
+              node.style.removeProperty('-webkit-box-decoration-break');
+              node.style.removeProperty('box-shadow');
+              node.style.removeProperty('outline');
+              node.style.removeProperty('outline-offset');
+              node.style.removeProperty('transform');
+            });
+          }
         }
       } catch (e) {}
     });
@@ -1094,11 +1103,11 @@
       return false;
     }
 
-    /* Resilient Event Attendance Parsing */
+    /* Fixed Event Attendance Parsing with Valid URL Interpolation */
     async function getAllAttendance(clientId) {
       if (cache.eventAttendance.has(clientId)) return cache.eventAttendance.get(clientId);
 
-      // Backtick string interpolation
+      // Backtick string interpolation correctly resolves customer ID
       const res = await fetch(`/app/common/entity/custjob.nl?id=${clientId}&selectedtab=custom26`);
       const html = await res.text();
       const mainDoc = new DOMParser().parseFromString(html, 'text/html');
@@ -1136,7 +1145,6 @@
           const row = cLink.closest('tr');
           if (!row || row.querySelector('th')) return;
 
-          // Exclude notes, messages, activities, media, and general directory contact lists
           const tbl = row.closest('table');
           if (tbl && tbl.id && /usernotes|messages|activities|media|contacts?_?splits|address|calls|tasks/i.test(tbl.id)) return;
 
@@ -1144,7 +1152,6 @@
           const contactId = cLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] || '';
           if (!contactName) return;
 
-          // Extract NetSuite Edit URL
           let rowEditUrl = '';
           const allRowLinks = Array.from(row.querySelectorAll('a'));
           for (const a of allRowLinks) {
@@ -1197,7 +1204,6 @@
             }
           });
 
-          // Ensure genuine event records have an attendance date
           if (attendanceDate && (seminarTitle || attendanceStatus || rowEditUrl)) {
             const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}`;
             if (!results.some(r => r.compoundKey === compoundKey)) {
@@ -1412,7 +1418,12 @@
                     if (!u || u === 'javascript:void(0)') return;
                     e.preventDefault();
                     e.stopPropagation();
-                    window.open(u, '_blank');
+                    try {
+                      const rootWin = window.opener || window;
+                      rootWin.open(u, '_blank');
+                    } catch(err) {
+                      window.open(u, '_blank');
+                    }
                   };
                 });
               }
@@ -1896,18 +1907,36 @@
       badge.style.borderColor = connected ? 'rgba(34, 197, 94, 0.4)' : 'rgba(245, 158, 11, 0.4)';
     }
 
-    window.__nsRehookOpener = function() {
+    /* Active Delegator Rehook Mechanism (No Reload Required) */
+    window.__nsRehookOpener = function(explicitOpener) {
       try {
-        if (!window.opener || window.opener.closed) { setBridgeStatus(false); return; }
-        const oDoc = window.opener.document;
+        if (explicitOpener && !explicitOpener.closed) {
+          try { window.opener = explicitOpener; } catch (e) {}
+        }
+        const oWin = window.opener;
+        if (!oWin || oWin.closed) { setBridgeStatus(false); return; }
+        const oDoc = oWin.document;
         if (oDoc && oDoc.body) {
           ensureBoardStyles(oDoc);
 
-          if (!oDoc.__nsInspectorBridgeHooked) {
-            oDoc.__nsInspectorBridgeHooked = true;
-            oDoc.addEventListener('click', onBoardClick, true);
-            setBridgeStatus(true);
+          // Always point the parent page's active handler to THIS popup's click processor
+          oWin.__nsInspectorActiveHandler = onBoardClick;
+
+          // Install parent listener only once; subsequent popups seamlessly take over the handler
+          if (!oWin.__nsInspectorListenerInstalled) {
+            oWin.__nsInspectorListenerInstalled = true;
+            oDoc.addEventListener('click', function(e) {
+              if (typeof oWin.__nsInspectorActiveHandler === 'function') {
+                try {
+                  oWin.__nsInspectorActiveHandler(e);
+                } catch (err) {
+                  oWin.__nsInspectorActiveHandler = null;
+                }
+              }
+            }, true);
           }
+
+          setBridgeStatus(true);
         }
       } catch (err) {
         setBridgeStatus(false);

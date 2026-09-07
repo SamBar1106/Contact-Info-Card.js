@@ -84,7 +84,7 @@
     window.addEventListener('pagehide', saveWindowGeometry);
     setInterval(saveWindowGeometry, 1500);
 
-    /* Zero-Layout-Shift Board Style Injector */
+    /* Clean Board Style Injector (Preserves Native Board Font Size) */
     function ensureBoardStyles(doc) {
       if (!doc) return;
       let s = doc.getElementById('ns-inspector-board-styles');
@@ -98,20 +98,18 @@
           background-color: #fef08a !important;
           box-shadow: inset 0 0 0 2px #ca8a04 !important;
           border-radius: 2px !important;
-          transition: background-color 0.12s ease !important;
         }
         .ns-inspector-active-highlight,
         .ns-inspector-active-highlight a,
         .ns-inspector-active-highlight span,
         .ns-inspector-active-highlight div {
           color: #000000 !important;
-          font-weight: 700 !important;
           text-shadow: none !important;
         }
       `;
     }
 
-    /* Zero-Layout-Shift Board Highlighter */
+    /* Zero-Font-Shift Board Highlighter */
     function highlightBoardElement(el) {
       try {
         if (!el) return;
@@ -129,7 +127,6 @@
           node.style.removeProperty('transform');
         });
 
-        // Resolve target element without breaking container dimensions
         const target = el.closest('[data-courseattendeeid]') || 
                        el.closest('.attendeeName') || 
                        el.closest('a[href*="contact.nl"]') || 
@@ -139,7 +136,6 @@
         if (target) {
           target.classList.add('ns-inspector-active-highlight');
 
-          // Direct inline styles that guarantee zero layout reflow
           target.style.setProperty('background-color', '#fef08a', 'important');
           target.style.setProperty('box-shadow', 'inset 0 0 0 2px #ca8a04', 'important');
           target.style.setProperty('border-radius', '2px', 'important');
@@ -153,7 +149,6 @@
       }
     }
 
-    // Clean up highlights when the inspector closes
     window.addEventListener('pagehide', () => {
       try {
         const oDoc = window.opener?.document;
@@ -1289,7 +1284,6 @@
       activePdfUrl = '';
       cachedMatchingSeminars = null;
 
-      /* Highlight clicked attendee on the main scheduling board */
       highlightBoardElement(attendee.element);
 
       setPdfPiPLoading(attendee.attendeeName);
@@ -1414,7 +1408,6 @@
       const clickedCell = eventTarget.closest('td, th, [data-clientid], [data-customerid]') || eventTarget;
       const tr = clickedCell.closest('tr');
 
-      /* Highlight clicked attendee on the main scheduling board */
       highlightBoardElement(eventTarget);
 
       const nameEl = clickedCell.querySelector('.attendeeName') || clickedCell.closest('.attendeeName') || clickedCell;

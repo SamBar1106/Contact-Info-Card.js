@@ -84,7 +84,7 @@
     window.addEventListener('pagehide', saveWindowGeometry);
     setInterval(saveWindowGeometry, 1500);
 
-    /* Clean Board Style Injector (Preserves Native Board Font Size) */
+    /* Text-Only Highlighter Styles (Zero Container Disruption) */
     function ensureBoardStyles(doc) {
       if (!doc) return;
       let s = doc.getElementById('ns-inspector-board-styles');
@@ -96,20 +96,27 @@
       s.textContent = `
         .ns-inspector-active-highlight {
           background-color: #fef08a !important;
-          box-shadow: inset 0 0 0 2px #ca8a04 !important;
-          border-radius: 2px !important;
+          color: #000000 !important;
+          padding: 1px 4px !important;
+          border-radius: 3px !important;
+          display: inline-block !important;
+          box-decoration-break: clone !important;
+          -webkit-box-decoration-break: clone !important;
+          box-shadow: none !important;
+          outline: none !important;
+          transform: none !important;
         }
-        .ns-inspector-active-highlight,
         .ns-inspector-active-highlight a,
         .ns-inspector-active-highlight span,
         .ns-inspector-active-highlight div {
           color: #000000 !important;
+          background: transparent !important;
           text-shadow: none !important;
         }
       `;
     }
 
-    /* Zero-Font-Shift Board Highlighter */
+    /* Name-Only Highlighter */
     function highlightBoardElement(el) {
       try {
         if (!el) return;
@@ -119,33 +126,54 @@
         // Clear previous highlights
         targetDoc.querySelectorAll('.ns-inspector-active-highlight').forEach(node => {
           node.classList.remove('ns-inspector-active-highlight');
-          node.style.removeProperty('box-shadow');
           node.style.removeProperty('background-color');
+          node.style.removeProperty('color');
+          node.style.removeProperty('padding');
           node.style.removeProperty('border-radius');
+          node.style.removeProperty('display');
+          node.style.removeProperty('box-decoration-break');
+          node.style.removeProperty('-webkit-box-decoration-break');
+          node.style.removeProperty('box-shadow');
           node.style.removeProperty('outline');
           node.style.removeProperty('outline-offset');
           node.style.removeProperty('transform');
         });
 
-        const target = el.closest('[data-courseattendeeid]') || 
-                       el.closest('.attendeeName') || 
-                       el.closest('a[href*="contact.nl"]') || 
-                       el.closest('td') || 
-                       el;
+        // Pinpoint only the name text element, not the whole table cell
+        let target = el.querySelector('.attendeeName') || 
+                     el.closest('.attendeeName') || 
+                     el.querySelector('a[href*="contact.nl"]') || 
+                     el.closest('a[href*="contact.nl"]') ||
+                     el.querySelector('.attendeeNameWrap') ||
+                     el.closest('.attendeeNameWrap');
 
-        if (target) {
-          target.classList.add('ns-inspector-active-highlight');
+        if (!target && (el.getAttribute('data-courseattendeeid') || el.closest('[data-courseattendeeid]'))) {
+          const block = el.closest('[data-courseattendeeid]') || el;
+          target = block.querySelector('.attendeeName, a, span') || block;
+        }
 
-          target.style.setProperty('background-color', '#fef08a', 'important');
-          target.style.setProperty('box-shadow', 'inset 0 0 0 2px #ca8a04', 'important');
-          target.style.setProperty('border-radius', '2px', 'important');
+        if (!target && (el.tagName === 'TD' || el.tagName === 'TH')) {
+          target = el.querySelector('a, span, b, strong') || el;
+        }
 
-          if (typeof target.scrollIntoView === 'function') {
-            target.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-          }
+        if (!target) target = el;
+
+        target.classList.add('ns-inspector-active-highlight');
+
+        // Apply direct inline highlighter styles
+        target.style.setProperty('background-color', '#fef08a', 'important');
+        target.style.setProperty('color', '#000000', 'important');
+        target.style.setProperty('padding', '1px 4px', 'important');
+        target.style.setProperty('border-radius', '3px', 'important');
+        target.style.setProperty('display', 'inline-block', 'important');
+        target.style.setProperty('box-decoration-break', 'clone', 'important');
+        target.style.setProperty('-webkit-box-decoration-break', 'clone', 'important');
+
+        if (typeof target.scrollIntoView === 'function') {
+          target.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
         }
       } catch (err) {
-        console.warn('Failed to highlight element on board:', err);
+        console.warn('Failed to highlight name on board:', err);
       }
     }
 
@@ -155,9 +183,14 @@
         if (oDoc) {
           oDoc.querySelectorAll('.ns-inspector-active-highlight').forEach(node => {
             node.classList.remove('ns-inspector-active-highlight');
-            node.style.removeProperty('box-shadow');
             node.style.removeProperty('background-color');
+            node.style.removeProperty('color');
+            node.style.removeProperty('padding');
             node.style.removeProperty('border-radius');
+            node.style.removeProperty('display');
+            node.style.removeProperty('box-decoration-break');
+            node.style.removeProperty('-webkit-box-decoration-break');
+            node.style.removeProperty('box-shadow');
             node.style.removeProperty('outline');
             node.style.removeProperty('outline-offset');
             node.style.removeProperty('transform');

@@ -942,7 +942,7 @@
       return `<span class="pill" style="background:${bg}; color:${color}; border:1px solid ${border}; font-size:10px; font-weight:700;">${status}</span>`;
     }
 
-    /* Standalone 60-Day Office Outlook Window Scanner with Status Resolution */
+    /* Standalone 60-Day Office Outlook Window Scanner with Status Resolution and Copy Feature */
     btnScan60d.onclick = async () => {
       if (!activeClientInternalId) {
         alert('Please click on an attendee or client on the board first.');
@@ -1030,7 +1030,10 @@
               <div style="font-weight:700; font-size:14px; color:#38bdf8;">📅 Office 60-Day Attendance Outlook</div>
               <div id="out-client-header" style="font-size:11px; color:rgb(161,161,170); margin-top:2px;">Client: ${scanClientName}</div>
             </div>
-            <button id="out-btn-close" class="btn">✕ Close</button>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <button id="out-btn-copy-sched" class="btn" style="background:rgba(251,191,36,0.15); color:#fbbf24; border:1px solid rgba(251,191,36,0.4);" title="Copy all Scheduled contacts, seminars, and dates">📋 Copy Scheduled</button>
+              <button id="out-btn-close" class="btn">✕ Close</button>
+            </div>
           </div>
 
           <div id="out-progress-box" style="padding:8px 14px; font-size:11px; color:rgb(251,191,36); background:rgba(251,191,36,0.08); border-bottom:1px solid rgba(251,191,36,0.2); display:flex; align-items:center; gap:8px;">
@@ -1063,9 +1066,69 @@
       const outCloseBtn = outDoc.getElementById('out-btn-close');
       if (outCloseBtn) outCloseBtn.onclick = () => { outlookWindow.close(); };
 
+      const outCopySchedBtn = outDoc.getElementById('out-btn-copy-sched');
       const progressBox = outDoc.getElementById('out-progress-box');
       const progressCount = outDoc.getElementById('out-progress-count');
       const tbody = outDoc.getElementById('out-tbody');
+
+      let currentUpcomingEvents = [];
+
+      // Clipboard helper supporting popup security policies
+      function copyToClipboard(textToCopy) {
+        if (outlookWindow.navigator && outlookWindow.navigator.clipboard && outlookWindow.navigator.clipboard.writeText) {
+          return outlookWindow.navigator.clipboard.writeText(textToCopy).catch(() => fallbackCopy(textToCopy));
+        }
+        return fallbackCopy(textToCopy);
+      }
+
+      function fallbackCopy(textToCopy) {
+        try {
+          const ta = outDoc.createElement('textarea');
+          ta.value = textToCopy;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          outDoc.body.appendChild(ta);
+          ta.select();
+          outDoc.execCommand('copy');
+          ta.remove();
+          return Promise.resolve();
+        } catch (e) {
+          return Promise.reject(e);
+        }
+      }
+
+      if (outCopySchedBtn) {
+        outCopySchedBtn.onclick = async () => {
+          const scheduledOnly = currentUpcomingEvents.filter(ev => {
+            const s = (ev.status || '').trim().toLowerCase();
+            return s === 'scheduled' || (s.includes('sched') && !s.includes('resched'));
+          });
+
+          if (!scheduledOnly.length) {
+            const orig = outCopySchedBtn.textContent;
+            outCopySchedBtn.textContent = 'None Scheduled';
+            setTimeout(() => { outCopySchedBtn.textContent = orig; }, 2000);
+            return;
+          }
+
+          const exportText = scheduledOnly.map(ev => `${ev.contactName} - ${ev.title} - ${ev.dateStr}`).join('\n');
+
+          try {
+            await copyToClipboard(exportText);
+            const orig = outCopySchedBtn.textContent;
+            outCopySchedBtn.textContent = `✓ Copied (${scheduledOnly.length})!`;
+            outCopySchedBtn.style.color = '#4ade80';
+            outCopySchedBtn.style.borderColor = 'rgba(74, 222, 128, 0.5)';
+            setTimeout(() => {
+              outCopySchedBtn.textContent = orig;
+              outCopySchedBtn.style.color = '#fbbf24';
+              outCopySchedBtn.style.borderColor = 'rgba(251, 191, 36, 0.4)';
+            }, 2500);
+          } catch (err) {
+            alert('Failed to copy to clipboard:\n\n' + exportText);
+          }
+        };
+      }
 
       try {
         const contacts = await getAllClientContacts(scanClientId);
@@ -1214,6 +1277,7 @@
         }
 
         upcomingEvents.sort((a, b) => a.timestamp - b.timestamp);
+        currentUpcomingEvents = upcomingEvents;
 
         tbody.innerHTML = upcomingEvents.map(ev => {
           let badge = `<span class="pill" style="background:rgba(56,189,248,0.2); color:#38bdf8; border:1px solid rgba(56,189,248,0.4);">In ${ev.diffDays} day(s)</span>`;

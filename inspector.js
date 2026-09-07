@@ -389,7 +389,7 @@
         if (iso) return { rawDate: ddmonM[0], iso };
       }
 
-      const monNameM = line.match(/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*,?\s*\d{2,4})?\b/i);
+      const monNameM = line.match(/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*,?\s*(\d{2,4}))?\b/i);
       if (monNameM) {
         const iso = normalizeDate(monNameM[0]);
         if (iso) return { rawDate: monNameM[0], iso };
@@ -942,7 +942,7 @@
       return `<span class="pill" style="background:${bg}; color:${color}; border:1px solid ${border}; font-size:10px; font-weight:700;">${status}</span>`;
     }
 
-    /* Standalone 60-Day Office Outlook Window Scanner with Status Resolution and Copy Feature */
+    /* Standalone 60-Day Office Outlook Window Scanner with Grouped Copy Feature */
     btnScan60d.onclick = async () => {
       if (!activeClientInternalId) {
         alert('Please click on an attendee or client on the board first.');
@@ -1031,7 +1031,7 @@
               <div id="out-client-header" style="font-size:11px; color:rgb(161,161,170); margin-top:2px;">Client: ${scanClientName}</div>
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
-              <button id="out-btn-copy-sched" class="btn" style="background:rgba(251,191,36,0.15); color:#fbbf24; border:1px solid rgba(251,191,36,0.4);" title="Copy all Scheduled contacts, seminars, and dates">📋 Copy Scheduled</button>
+              <button id="out-btn-copy-sched" class="btn" style="background:rgba(251,191,36,0.15); color:#fbbf24; border:1px solid rgba(251,191,36,0.4);" title="Copy grouped Scheduled contacts and dates">📋 Copy Scheduled</button>
               <button id="out-btn-close" class="btn">✕ Close</button>
             </div>
           </div>
@@ -1073,7 +1073,6 @@
 
       let currentUpcomingEvents = [];
 
-      // Clipboard helper supporting popup security policies
       function copyToClipboard(textToCopy) {
         if (outlookWindow.navigator && outlookWindow.navigator.clipboard && outlookWindow.navigator.clipboard.writeText) {
           return outlookWindow.navigator.clipboard.writeText(textToCopy).catch(() => fallbackCopy(textToCopy));
@@ -1099,9 +1098,16 @@
 
       if (outCopySchedBtn) {
         outCopySchedBtn.onclick = async () => {
+          // Strict filtering: Include ONLY Scheduled, explicitly exclude Schedule Change / Rescheduled
           const scheduledOnly = currentUpcomingEvents.filter(ev => {
             const s = (ev.status || '').trim().toLowerCase();
-            return s === 'scheduled' || (s.includes('sched') && !s.includes('resched'));
+            const t = (ev.title || '').trim().toLowerCase();
+
+            if (s.includes('change') || s.includes('resched') || t.includes('schedule change') || t.includes('sched change')) {
+              return false;
+            }
+
+            return s === 'scheduled' || (s.startsWith('sched') && !s.includes('change'));
           });
 
           if (!scheduledOnly.length) {
@@ -1111,7 +1117,21 @@
             return;
           }
 
-          const exportText = scheduledOnly.map(ev => `${ev.contactName} - ${ev.title} - ${ev.dateStr}`).join('\n');
+          // Group strictly by Course / Seminar, list only Name and Date
+          const courseGroups = new Map();
+          scheduledOnly.forEach(ev => {
+            const courseTitle = ev.title || 'Scheduled Seminar';
+            if (!courseGroups.has(courseTitle)) {
+              courseGroups.set(courseTitle, []);
+            }
+            courseGroups.get(courseTitle).push(`${ev.contactName} - ${ev.dateStr}`);
+          });
+
+          const outputBlocks = [];
+          for (const [courseTitle, attendees] of courseGroups.entries()) {
+            outputBlocks.push(`${courseTitle}\n` + attendees.join('\n'));
+          }
+          const exportText = outputBlocks.join('\n\n');
 
           try {
             await copyToClipboard(exportText);

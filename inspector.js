@@ -61,6 +61,7 @@
     let activeAttendeeId = null;
     let seminarPipWin = null;
     let pdfPipWin = null;
+    let outlookWindow = null;
     let cachedMatchingSeminars = null;
 
     /* Absolute URL Resolver for Cross-Window & PiP Navigation */
@@ -167,8 +168,8 @@
         let target = el.querySelector('.attendeeName') || 
                      el.closest('.attendeeName') || 
                      el.querySelector('a[href*="contact.nl"]') || 
-                     el.closest('a[href*="contact.nl"]') ||
-                     el.querySelector('.attendeeNameWrap') ||
+                     el.closest('a[href*="contact.nl"]') || 
+                     el.querySelector('.attendeeNameWrap') || 
                      el.closest('.attendeeNameWrap');
 
         if (!target && (el.getAttribute('data-courseattendeeid') || el.closest('[data-courseattendeeid]'))) {
@@ -294,7 +295,7 @@
       const refYear = now.getFullYear();
       const refMonth = now.getMonth() + 1;
 
-      // 1. Date Range: e.g. 10/15 - 10/17 or 10/15/2026 - 10/17/2026
+      // 1. Date Range
       const rangeMatch = s.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\s*(?:-|to|–)\s*(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/i);
       if (rangeMatch) {
         const m1 = parseInt(rangeMatch[1], 10);
@@ -310,13 +311,13 @@
         return `${yr}-${String(m1).padStart(2, '0')}-${String(d1).padStart(2, '0')}`;
       }
 
-      // 2. ISO format: YYYY-MM-DD
+      // 2. ISO format
       const isoM = s.match(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/);
       if (isoM) {
         return `${isoM[1]}-${String(isoM[2]).padStart(2, '0')}-${String(isoM[3]).padStart(2, '0')}`;
       }
 
-      // 3. DD-Mon-YYYY or DD-Mon-YY
+      // 3. DD-Mon-YYYY
       const monthsMap = { jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
       const ddmmyyyy = s.match(/\b(\d{1,2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*-(\d{2,4})\b/i);
       if (ddmmyyyy) {
@@ -325,7 +326,7 @@
         return `${yr}-${monthsMap[ddmmyyyy[2].toLowerCase()] || '01'}-${String(ddmmyyyy[1]).padStart(2, '0')}`;
       }
 
-      // 4. Month DD, YYYY or Month DD
+      // 4. Month DD, YYYY
       const monthNameM = s.match(/\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{2,4}))?\b/i);
       if (monthNameM) {
         const mPrefix = monthNameM[1].substring(0, 3).toLowerCase();
@@ -341,7 +342,7 @@
         return `${yr}-${String(mNum).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
       }
 
-      // 5. Slash with year: MM/DD/YYYY
+      // 5. Slash with year
       const slashWithYear = s.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/);
       if (slashWithYear) {
         const m = parseInt(slashWithYear[1], 10);
@@ -351,7 +352,7 @@
         return `${yr}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       }
 
-      // 6. Slash without year: MM/DD
+      // 6. Slash without year
       const slashNoYear = s.match(/\b(\d{1,2})\/(\d{1,2})\b/);
       if (slashNoYear) {
         const m = parseInt(slashNoYear[1], 10);
@@ -628,17 +629,6 @@
         font-size: 13px; color: rgb(244, 244, 245); white-space: pre-wrap; word-break: break-word;
         user-select: text !important; -webkit-user-select: text !important; cursor: text;
       }
-
-      /* 60-Day Outlook Modal Styles */
-      #ns-modal-60d {
-        display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(14, 14, 17, 0.98); z-index: 10000; flex-direction: column;
-        padding: 12px; box-sizing: border-box; backdrop-filter: blur(8px);
-      }
-      .table-60d { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
-      .table-60d th { background: rgba(255,255,255,0.06); padding: 8px 6px; text-align: left; color: rgb(161,161,170); font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.12); }
-      .table-60d td { padding: 8px 6px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: middle; color: rgb(244,244,245); }
-      .table-60d tr:hover { background: rgba(255,255,255,0.03); }
     `;
     document.head.appendChild(style);
 
@@ -737,75 +727,148 @@
           </div>
         </div>
       </div>
-
-      <!-- 60-Day Office Outlook Overlay -->
-      <div id="ns-modal-60d">
-        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.12); padding-bottom:8px;">
-          <div>
-            <div style="font-weight:700; font-size:13px; color:#38bdf8;">📅 Office 60-Day Attendance Outlook</div>
-            <div id="ns-modal-60d-client" style="font-size:11px; color:rgb(161,161,170); margin-top:2px;">-</div>
-          </div>
-          <button id="ns-modal-60d-close" class="btn" style="padding:4px 8px; font-size:11px;">✕ Close</button>
-        </div>
-
-        <div id="ns-modal-60d-progress" style="padding:10px 0; font-size:11px; color:rgb(251,191,36); display:none;">
-          <span>Scanning office schedule PDFs: </span>
-          <span id="ns-modal-60d-progress-text">0/0</span>
-        </div>
-
-        <div style="flex:1; overflow-y:auto; margin-top:6px;">
-          <table class="table-60d">
-            <thead>
-              <tr>
-                <th>Attendee</th>
-                <th>Course / Seminar</th>
-                <th>Date</th>
-                <th>Timeline</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="ns-modal-60d-tbody">
-              <tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:20px;">Click Scan to read office schedules...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
     `;
     document.body.appendChild(appContainer);
 
     const seminarPill = document.getElementById('ns-seminar-pip-pill');
-    const modal60d = document.getElementById('ns-modal-60d');
-    const modalCloseBtn = document.getElementById('ns-modal-60d-close');
     const btnScan60d = document.getElementById('ns-insp-btn-scan-60d');
 
-    modalCloseBtn.onclick = () => { modal60d.style.display = 'none'; };
-
-    /* 60-Day Office Outlook Batch Scanner */
+    /* Standalone 60-Day Office Outlook Window Scanner */
     btnScan60d.onclick = async () => {
       if (!activeClientInternalId) {
         alert('Please click on an attendee or client on the board first.');
         return;
       }
 
-      modal60d.style.display = 'flex';
-      document.getElementById('ns-modal-60d-client').textContent = 'Client: ' + (activeClientName || 'Selected Client');
-      const progressBox = document.getElementById('ns-modal-60d-progress');
-      const progressText = document.getElementById('ns-modal-60d-progress-text');
-      const tbody = document.getElementById('ns-modal-60d-tbody');
+      const scanClientId = activeClientInternalId;
+      const scanClientName = activeClientName || 'Selected Client';
+      const scanContactId = activeContactId;
+      const scanContactName = activeContactName;
 
-      progressBox.style.display = 'block';
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:20px;">Discovering office contacts (Relationships subtab)...</td></tr>';
+      const outWidth = 820;
+      const outHeight = 670;
+      const currX = window.screenX !== undefined ? window.screenX : window.screenLeft;
+      const currY = window.screenY !== undefined ? window.screenY : window.screenTop;
+      const outLeft = Math.max(10, currX - outWidth - 15 >= 0 ? currX - outWidth - 15 : 20);
+      const outTop = Math.max(20, currY);
+
+      if (outlookWindow && !outlookWindow.closed) {
+        outlookWindow.focus();
+      } else {
+        outlookWindow = window.open('', 'NSOutlook60DayWindow', `popup=1,width=${outWidth},height=${outHeight},left=${outLeft},top=${outTop},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no`);
+      }
+
+      if (!outlookWindow) {
+        alert('Pop-up Blocked! Please allow pop-ups to view the 60-Day Office Outlook.');
+        return;
+      }
+
+      const outDoc = outlookWindow.document;
+      outDoc.open();
+      outDoc.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>60-Day Outlook • ${scanClientName}</title>
+          <style>
+            * { box-sizing: border-box; }
+            html, body {
+              margin: 0; padding: 0; width: 100%; height: 100%;
+              overflow: hidden; background: rgb(18, 18, 20);
+              font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+              font-size: 13px; color: rgb(244, 244, 245);
+              user-select: text; -webkit-user-select: text;
+              display: flex; flex-direction: column;
+            }
+            ::-webkit-scrollbar { width: 6px; height: 6px; }
+            ::-webkit-scrollbar-track { background: transparent; }
+            ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 999px; }
+
+            .nav-bar {
+              display: flex; justify-content: space-between; align-items: center;
+              padding: 10px 14px; background: rgba(24, 24, 27, 0.98);
+              border-bottom: 1px solid rgba(255, 255, 255, 0.12); flex-shrink: 0;
+            }
+            .btn {
+              padding: 5px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 12px;
+              border: 1px solid rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.08);
+              color: rgb(250, 250, 250); text-decoration: none; transition: all 0.2s ease;
+            }
+            .btn:hover { background: rgba(255, 255, 255, 0.15); }
+            .pill {
+              display: inline-block; padding: 3px 8px; border-radius: 999px;
+              font-size: 10px; font-weight: 700; text-transform: uppercase;
+              letter-spacing: 0.5px; white-space: nowrap;
+            }
+            .table-wrap { flex: 1; overflow-y: auto; padding: 12px; }
+            .table-60d { width: 100%; border-collapse: collapse; font-size: 12px; }
+            .table-60d th {
+              position: sticky; top: 0; background: rgb(24, 24, 27); z-index: 10;
+              padding: 10px 8px; text-align: left; color: rgb(161, 161, 170);
+              font-weight: 700; border-bottom: 2px solid rgba(255, 255, 255, 0.14);
+            }
+            .table-60d td {
+              padding: 9px 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+              vertical-align: middle; color: rgb(244, 244, 245);
+            }
+            .table-60d tr:hover { background: rgba(255, 255, 255, 0.035); }
+          </style>
+        </head>
+        <body>
+          <div class="nav-bar">
+            <div>
+              <div style="font-weight:700; font-size:14px; color:#38bdf8;">📅 Office 60-Day Attendance Outlook</div>
+              <div id="out-client-header" style="font-size:11px; color:rgb(161,161,170); margin-top:2px;">Client: ${scanClientName}</div>
+            </div>
+            <button id="out-btn-close" class="btn">✕ Close</button>
+          </div>
+
+          <div id="out-progress-box" style="padding:8px 14px; font-size:11px; color:rgb(251,191,36); background:rgba(251,191,36,0.08); border-bottom:1px solid rgba(251,191,36,0.2); display:flex; align-items:center; gap:8px;">
+            <span>Scanning office schedule PDFs: </span>
+            <strong id="out-progress-count">0 / 0</strong>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table-60d">
+              <thead>
+                <tr>
+                  <th style="width:26%;">Attendee</th>
+                  <th style="width:34%;">Course / Seminar</th>
+                  <th style="width:16%;">Date</th>
+                  <th style="width:12%;">Timeline</th>
+                  <th style="width:12%;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="out-tbody">
+                <tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:30px;">Discovering office contacts (Relationships subtab)...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </body>
+        </html>
+      `);
+      outDoc.close();
+
+      const outCloseBtn = outDoc.getElementById('out-btn-close');
+      if (outCloseBtn) outCloseBtn.onclick = () => { outlookWindow.close(); };
+
+      const progressBox = outDoc.getElementById('out-progress-box');
+      const progressCount = outDoc.getElementById('out-progress-count');
+      const tbody = outDoc.getElementById('out-tbody');
 
       try {
-        const contacts = await getAllClientContacts(activeClientInternalId);
+        const contacts = await getAllClientContacts(scanClientId);
 
-        if (activeContactId && !contacts.some(c => c.id === activeContactId)) {
-          contacts.push({ id: activeContactId, name: activeContactName || 'Selected Attendee', position: '' });
+        if (scanContactId && !contacts.some(c => c.id === scanContactId)) {
+          contacts.push({ id: scanContactId, name: scanContactName || 'Selected Attendee', position: '' });
         }
+
+        if (outlookWindow.closed) return;
 
         if (!contacts.length) {
           progressBox.style.display = 'none';
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(248,113,113); padding:20px;">No registered contacts found under Relationships tab.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(248,113,113); padding:30px;">No registered contacts found under Relationships tab.</td></tr>';
           return;
         }
 
@@ -815,10 +878,11 @@
 
         const upcomingEvents = [];
         let processedCount = 0;
-        progressText.textContent = `0 / ${contacts.length}`;
+        progressCount.textContent = `0 / ${contacts.length}`;
 
         const chunkSize = 2;
         for (let i = 0; i < contacts.length; i += chunkSize) {
+          if (outlookWindow.closed) return;
           const chunk = contacts.slice(i, i + chunkSize);
           await Promise.all(chunk.map(async (contact) => {
             const pdfUrl = `/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=${contact.id}`;
@@ -873,23 +937,26 @@
               }
             } catch (err) {}
             processedCount++;
-            progressText.textContent = `${processedCount} / ${contacts.length}`;
+            if (!outlookWindow.closed) {
+              progressCount.textContent = `${processedCount} / ${contacts.length}`;
+            }
           }));
         }
 
+        if (outlookWindow.closed) return;
         progressBox.style.display = 'none';
 
         if (!upcomingEvents.length) {
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:20px;">No upcoming sessions scheduled in the next 60 days for this office.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:30px;">No upcoming sessions scheduled in the next 60 days for this office.</td></tr>';
           return;
         }
 
         upcomingEvents.sort((a, b) => a.timestamp - b.timestamp);
 
         tbody.innerHTML = upcomingEvents.map(ev => {
-          let badge = `<span class="pill" style="background:rgba(56,189,248,0.2); color:#38bdf8; border-color:rgba(56,189,248,0.4);">In ${ev.diffDays} day(s)</span>`;
-          if (ev.diffDays === 0) badge = `<span class="pill" style="background:rgba(34,197,94,0.25); color:#4ade80; border-color:rgba(34,197,94,0.6);">Today</span>`;
-          else if (ev.diffDays === 1) badge = `<span class="pill" style="background:rgba(251,191,36,0.2); color:#fbbf24; border-color:rgba(251,191,36,0.4);">Tomorrow</span>`;
+          let badge = `<span class="pill" style="background:rgba(56,189,248,0.2); color:#38bdf8; border:1px solid rgba(56,189,248,0.4);">In ${ev.diffDays} day(s)</span>`;
+          if (ev.diffDays === 0) badge = `<span class="pill" style="background:rgba(34,197,94,0.25); color:#4ade80; border:1px solid rgba(34,197,94,0.6);">Today</span>`;
+          else if (ev.diffDays === 1) badge = `<span class="pill" style="background:rgba(251,191,36,0.2); color:#fbbf24; border:1px solid rgba(251,191,36,0.4);">Tomorrow</span>`;
 
           const fullPdfUrl = toAbsoluteNsUrl(ev.pdfUrl);
           const fullContactUrl = toAbsoluteNsUrl('/app/common/entity/contact.nl?id=' + ev.contactId);
@@ -904,9 +971,9 @@
               <td style="white-space:nowrap;">${ev.dateStr}</td>
               <td style="white-space:nowrap;">${badge}</td>
               <td style="white-space:nowrap;">
-                <div style="display:flex; gap:4px;">
-                  <button class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border-color:rgba(192,132,252,0.4);" data-action-pdf="${fullPdfUrl}" data-action-name="${ev.contactName}">📄 PDF</button>
-                  <a href="${fullContactUrl}" target="_blank" class="pill" style="cursor:pointer; background:rgba(255,255,255,0.08); color:white; text-decoration:none;">Open ↗</a>
+                <div style="display:flex; gap:6px;">
+                  <button class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border:1px solid rgba(192,132,252,0.4);" data-action-pdf="${fullPdfUrl}" data-action-name="${ev.contactName}">📄 PDF</button>
+                  <a href="${fullContactUrl}" target="_blank" class="pill" style="cursor:pointer; background:rgba(255,255,255,0.08); color:white; border:1px solid rgba(255,255,255,0.18); text-decoration:none;">Open ↗</a>
                 </div>
               </td>
             </tr>
@@ -922,8 +989,10 @@
         });
 
       } catch (err) {
-        progressBox.style.display = 'none';
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:rgb(248,113,113); padding:20px;">Scan failed: ${err.message}</td></tr>`;
+        if (!outlookWindow.closed) {
+          progressBox.style.display = 'none';
+          tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:rgb(248,113,113); padding:30px;">Scan failed: ${err.message}</td></tr>`;
+        }
       }
     };
 
@@ -1175,7 +1244,7 @@
         bg = 'rgba(156, 163, 175, 0.2)'; color = 'rgb(209, 213, 219)'; border = 'rgba(156, 163, 175, 0.4)';
       }
 
-      return `<span class="pill" style="background:${bg}; color:${color}; border-color:${border}; font-size:10px; font-weight:700;">${status}</span>`;
+      return `<span class="pill" style="background:${bg}; color:${color}; border:1px solid ${border}; font-size:10px; font-weight:700;">${status}</span>`;
     }
 
     async function renderSeminarInPiP(list, title, clientName, dates) {
@@ -1220,8 +1289,8 @@
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <a href="${fullContactUrl || 'javascript:void(0)'}" data-nav-url="${fullContactUrl}" target="_blank" rel="noopener noreferrer" style="font-weight:700; font-size:14px; color:white;">${item.contactName}</a>
               <div style="display:flex; align-items:center; gap:4px;">
-                ${item.contactId ? `<span class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border-color:rgba(192,132,252,0.4);" data-pdf-contact="${item.contactId}" data-pdf-name="${item.contactName}">📄 PDF</span>` : ''}
-                ${fullEditUrl ? `<a href="${fullEditUrl}" data-nav-url="${fullEditUrl}" target="_blank" rel="noopener noreferrer" class="pill ns-pip-action-link" style="cursor:pointer; background:rgba(255, 255, 255, 0.12); color:rgb(244, 244, 245); border-color:rgba(255, 255, 255, 0.35); text-decoration:none;" title="Open Record in Edit Mode">EDIT ↗</a>` : ''}
+                ${item.contactId ? `<span class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border:1px solid rgba(192,132,252,0.4);" data-pdf-contact="${item.contactId}" data-pdf-name="${item.contactName}">📄 PDF</span>` : ''}
+                ${fullEditUrl ? `<a href="${fullEditUrl}" data-nav-url="${fullEditUrl}" target="_blank" rel="noopener noreferrer" class="pill ns-pip-action-link" style="cursor:pointer; background:rgba(255, 255, 255, 0.12); color:rgb(244, 244, 245); border:1px solid rgba(255, 255, 255, 0.35); text-decoration:none;" title="Open Record in Edit Mode">EDIT ↗</a>` : ''}
                 ${getStatusBadge(item.status || 'Status Unknown')}
               </div>
             </div>
@@ -1887,7 +1956,7 @@
                       <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
                         <span style="font-weight:700; color:#fff; font-size:12px;">${m.eventTitle || 'Linked Seminar'}</span>
                         <div style="display:flex; align-items:center; gap:4px;">
-                          ${fullEditUrl ? `<a href="${fullEditUrl}" data-nav-url="${fullEditUrl}" target="_blank" rel="noopener noreferrer" class="pill ns-edit-event-btn" style="cursor:pointer; background:rgba(255, 255, 255, 0.12); color:rgb(244, 244, 245); border-color:rgba(255, 255, 255, 0.35); text-decoration:none;" title="Open Record in Edit Mode">EDIT ↗</a>` : ''}
+                          ${fullEditUrl ? `<a href="${fullEditUrl}" data-nav-url="${fullEditUrl}" target="_blank" rel="noopener noreferrer" class="pill ns-edit-event-btn" style="cursor:pointer; background:rgba(255, 255, 255, 0.12); color:rgb(244, 244, 245); border:1px solid rgba(255, 255, 255, 0.35); text-decoration:none;" title="Open Record in Edit Mode">EDIT ↗</a>` : ''}
                           ${getStatusBadge(m.status)}
                         </div>
                       </div>
@@ -2247,7 +2316,6 @@
         getAllAttendance(capturedId).then(allAttendance => {
           if (activeClientInternalId !== capturedId) return;
 
-          // Preserve ALL client attendees for this seminar
           const displayAttendance = (boardEvent && allAttendance.length > 0)
             ? allAttendance.filter(item => {
                 const itemDate = normalizeDate(item.date);

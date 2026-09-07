@@ -48,6 +48,7 @@
     const cache = {
       contacts: new Map(),
       clients: new Map(),
+      clientContacts: new Map(),
       eventAttendance: new Map(),
       weekHeaders: new WeakMap()
     };
@@ -243,7 +244,7 @@
       });
     }
 
-    /* PDF Text Layer Extractor (Coordinate-Based Line Reassembly) */
+    /* PDF Text Layer Extractor */
     async function extractLinesFromPdf(pdfUrl) {
       if (!pdfUrl) return [];
       const pdfjs = await ensurePdfJsLoaded();
@@ -258,7 +259,6 @@
         const page = await pdfDoc.getPage(p);
         const textContent = await page.getTextContent();
         
-        // Group items by Y position (line clustering)
         const lineBuckets = new Map();
         textContent.items.forEach(item => {
           const text = (item.str || '').trim();
@@ -275,7 +275,6 @@
           lineBuckets.get(bucketY).push({ x: item.transform[4], str: item.str });
         });
 
-        // Sort lines top-to-bottom and tokens left-to-right
         const sortedY = Array.from(lineBuckets.keys()).sort((a, b) => b - a);
         sortedY.forEach(yKey => {
           const lineItems = lineBuckets.get(yKey).sort((a, b) => a.x - b.x);
@@ -285,6 +284,127 @@
       }
 
       return allLines;
+    }
+
+    /* Relationships Subtab (s_relation) Full Contact Discovery with Pagination */
+    async function getAllClientContacts(clientId) {
+      if (cache.clientContacts.has(clientId)) {
+        return cache.clientContacts.get(clientId);
+      }
+
+      const initialUrl = `/app/common/entity/custjob.nl?id=${clientId}&selectedtab=s_relation`;
+      const res = await fetch(initialUrl);
+      const html = await res.text();
+      const mainDoc = new DOMParser().parseFromString(html, 'text/html');
+      const allDocs = [mainDoc];
+
+      let machineName = 'contact';
+      let rangeParam = 'contactrange';
+      let pageIndices = [];
+
+      // Detect sublist pagination for contacts
+      const rangeEls = Array.from(mainDoc.querySelectorAll('[data-options*="range"], select[name*="range"]'));
+      const contactRangeEl = rangeEls.find(el => {
+        const str = (el.getAttribute('name') || el.id || el.getAttribute('data-options') || '').toLowerCase();
+        return str.includes('contact');
+      }) || rangeEls.find(el => {
+        const str = (el.getAttribute('name') || el.id || '').toLowerCase();
+        return !str.includes('mge_event');
+      });
+
+      if (contactRangeEl) {
+        const nameAttr = contactRangeEl.getAttribute('name') || contactRangeEl.id || '';
+        if (nameAttr) {
+          rangeParam = nameAttr;
+          machineName = nameAttr.replace(/range$/i, '');
+        }
+        try {
+          const rawOpts = (contactRangeEl.getAttribute('data-options') || '').replace(/&quot;/g, '"');
+          const opts = JSON.parse(rawOpts);
+          pageIndices = opts.map(o => String(o.value)).filter(v => v !== '0' && v !== '');
+        } catch (e) {
+          contactRangeEl.querySelectorAll('option').forEach(opt => {
+            const v = opt.value;
+            if (v && v !== '0' && !pageIndices.includes(v)) pageIndices.push(v);
+          });
+        }
+      }
+
+      // Fallback text check for "1 to 25 of 78"
+      if (!pageIndices.length) {
+        const textMatch = html.match(/\b1\s+to\s+(\d+)\s+of\s+(\d+)\b/i);
+        if (textMatch) {
+          const perPage = parseInt(textMatch[1], 10);
+          const total = parseInt(textMatch[2], 10);
+          if (perPage > 0 && total > perPage) {
+            const totalPages = Math.ceil(total / perPage);
+            for (let p = 1; p < totalPages; p++) pageIndices.push(String(p));
+          }
+        }
+      }
+
+      // Fetch all remaining contact pages
+      if (pageIndices.length > 0) {
+        const urls = pageIndices.map(si => 
+          `/app/common/entity/custjob.nl?id=${clientId}&selectedtab=s_relation&q=${rangeParam}&si=${si}&f=T&machine=${machineName}`
+        );
+        const responses = await Promise.allSettled(urls.map(u => fetch(u).then(r => r.text())));
+        responses.forEach(r => {
+          if (r.status === 'fulfilled' && r.value) {
+            allDocs.push(new DOMParser().parseFromString(r.value, 'text/html'));
+          }
+        });
+      }
+
+      // Parse all contact rows across all pages
+      const contactMap = new Map();
+
+      allDocs.forEach(d => {
+        d.querySelectorAll('a[href*="contact.nl?id="], a[href*="/entity/contact.nl?id="]').forEach(a => {
+          const href = a.getAttribute('href') || '';
+          const m = href.match(/[?&]id=(\d+)/);
+          if (!m) return;
+          const id = m[1];
+          const name = (a.innerText || a.textContent || '').trim();
+
+          if (!name || /^(edit|view)$/i.test(name)) return;
+
+          if (!contactMap.has(id)) {
+            const row = a.closest('tr');
+            let position = '';
+            if (row) {
+              const cells = Array.from(row.querySelectorAll('td'));
+              const tbl = row.closest('table');
+              const headerRow = tbl ? tbl.querySelector('tr.uir-list-header-tr, tr:has(th)') : null;
+              let posColIdx = -1;
+              if (headerRow) {
+                Array.from(headerRow.children).forEach((th, idx) => {
+                  const hTxt = (th.innerText || th.textContent || '').trim().toLowerCase();
+                  if (hTxt.includes('title') || hTxt.includes('job') || hTxt.includes('role') || hTxt.includes('position')) {
+                    posColIdx = idx;
+                  }
+                });
+              }
+              if (posColIdx !== -1 && cells[posColIdx]) {
+                position = (cells[posColIdx].innerText || cells[posColIdx].textContent || '').trim();
+              } else {
+                const nameTd = a.closest('td');
+                const nextTd = nameTd?.nextElementSibling;
+                if (nextTd) {
+                  const t = (nextTd.innerText || nextTd.textContent || '').trim();
+                  if (t && !t.includes('@') && !/\d{3}/.test(t)) position = t;
+                }
+              }
+            }
+
+            contactMap.set(id, { id, name, position });
+          }
+        });
+      });
+
+      const list = Array.from(contactMap.values());
+      cache.clientContacts.set(clientId, list);
+      return list;
     }
 
     const style = document.createElement('style');
@@ -556,32 +676,14 @@
       const tbody = document.getElementById('ns-modal-60d-tbody');
 
       progressBox.style.display = 'block';
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:20px;">Discovering office contacts...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:20px;">Discovering office contacts (Relationships subtab)...</td></tr>';
 
       try {
-        const clientData = await getClientData(activeClientInternalId);
-        let clientDoc = clientData.doc;
-        if (!clientDoc) {
-          const r = await fetch('/app/common/entity/custjob.nl?id=' + activeClientInternalId);
-          clientDoc = new DOMParser().parseFromString(await r.text(), 'text/html');
-        }
+        const contacts = await getAllClientContacts(activeClientInternalId);
 
-        // Discover all contacts under this client
-        const contactMap = new Map();
-        clientDoc.querySelectorAll('a[href*="contact.nl?id="], a[href*="/entity/contact.nl?id="]').forEach(a => {
-          const id = a.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1];
-          const name = (a.innerText || a.textContent || '').trim();
-          if (id && name && !contactMap.has(id)) {
-            const row = a.closest('tr');
-            const pos = row ? (row.querySelector('td:nth-child(4), td.position')?.innerText || '').trim() : '';
-            contactMap.set(id, { id, name, position: pos });
-          }
-        });
-
-        const contacts = Array.from(contactMap.values());
         if (!contacts.length) {
           progressBox.style.display = 'none';
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(248,113,113); padding:20px;">No registered contacts found under this client.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(248,113,113); padding:20px;">No registered contacts found under Relationships tab.</td></tr>';
           return;
         }
 
@@ -593,7 +695,6 @@
         let processedCount = 0;
         progressText.textContent = `0 / ${contacts.length}`;
 
-        // Process in throttled concurrent chunks of 2
         const chunkSize = 2;
         for (let i = 0; i < contacts.length; i += chunkSize) {
           const chunk = contacts.slice(i, i + chunkSize);
@@ -602,7 +703,6 @@
             try {
               const lines = await extractLinesFromPdf(pdfUrl);
               lines.forEach(line => {
-                // Look for dates inside line
                 const dMatch = line.match(/\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}-[A-Za-z]{3}-\d{2,4}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i);
                 if (dMatch) {
                   const iso = normalizeDate(dMatch[0]);
@@ -647,7 +747,6 @@
           return;
         }
 
-        // Sort events chronologically
         upcomingEvents.sort((a, b) => a.timestamp - b.timestamp);
 
         tbody.innerHTML = upcomingEvents.map(ev => {
@@ -2018,18 +2117,19 @@
           document.getElementById('ns-insp-client-fetch-status').textContent = 'Resolved';
           document.getElementById('ns-insp-client-fetch-status').style.color = 'rgb(52, 211, 153)';
 
-          // If contact ID was not in DOM, resolve contact by name from client page
-          if (!activeContactId && clientData.doc && attendeeParsedName) {
-            const cLinks = Array.from(clientData.doc.querySelectorAll('a[href*="contact.nl?id="], a[href*="/entity/contact.nl?id="]'));
-            const foundLink = cLinks.find(a => (a.innerText || a.textContent || '').trim().toLowerCase().includes(attendeeParsedName.toLowerCase())) ||
-                              cLinks.find(a => attendeeParsedName.toLowerCase().includes((a.innerText || a.textContent || '').trim().toLowerCase()));
-            if (foundLink) {
-              const cId = foundLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1];
-              if (cId) {
-                detectedContactId = cId;
-                getContactData(cId).then(cData => applyContactToUi(cId, cData));
+          // If contact ID was not in DOM, resolve contact from full Relationships list
+          if (!activeContactId && attendeeParsedName) {
+            getAllClientContacts(capturedId).then(allContacts => {
+              if (activeContactId) return;
+              const found = allContacts.find(c => 
+                c.name.toLowerCase().includes(attendeeParsedName.toLowerCase()) ||
+                attendeeParsedName.toLowerCase().includes(c.name.toLowerCase())
+              );
+              if (found) {
+                detectedContactId = found.id;
+                getContactData(found.id).then(cData => applyContactToUi(found.id, cData));
               }
-            }
+            });
           }
         }).catch(() => {
           if (activeClientInternalId === capturedId) {

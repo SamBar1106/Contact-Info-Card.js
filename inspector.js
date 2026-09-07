@@ -84,7 +84,7 @@
     window.addEventListener('pagehide', saveWindowGeometry);
     setInterval(saveWindowGeometry, 1500);
 
-    /* Guaranteed Parent Board Style Injector (Floating Yellow Design) */
+    /* Zero-Layout-Shift Board Style Injector */
     function ensureBoardStyles(doc) {
       if (!doc) return;
       let s = doc.getElementById('ns-inspector-board-styles');
@@ -95,29 +95,23 @@
       }
       s.textContent = `
         .ns-inspector-active-highlight {
-          outline: 2px solid #ca8a04 !important;
-          outline-offset: -1px !important;
           background-color: #fef08a !important;
-          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28) !important;
-          transform: translateY(-2px) !important;
-          position: relative !important;
-          z-index: 9999 !important;
-          border-radius: 4px !important;
-          transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+          box-shadow: inset 0 0 0 2px #ca8a04 !important;
+          border-radius: 2px !important;
+          transition: background-color 0.12s ease !important;
         }
         .ns-inspector-active-highlight,
         .ns-inspector-active-highlight a,
         .ns-inspector-active-highlight span,
         .ns-inspector-active-highlight div {
           color: #000000 !important;
-          font-weight: 800 !important;
-          font-size: calc(100% + 2px) !important;
+          font-weight: 700 !important;
           text-shadow: none !important;
         }
       `;
     }
 
-    /* Floating Yellow Board Highlighter */
+    /* Zero-Layout-Shift Board Highlighter */
     function highlightBoardElement(el) {
       try {
         if (!el) return;
@@ -127,16 +121,15 @@
         // Clear previous highlights
         targetDoc.querySelectorAll('.ns-inspector-active-highlight').forEach(node => {
           node.classList.remove('ns-inspector-active-highlight');
-          node.style.removeProperty('outline');
-          node.style.removeProperty('outline-offset');
           node.style.removeProperty('box-shadow');
           node.style.removeProperty('background-color');
-          node.style.removeProperty('transform');
-          node.style.removeProperty('z-index');
           node.style.removeProperty('border-radius');
+          node.style.removeProperty('outline');
+          node.style.removeProperty('outline-offset');
+          node.style.removeProperty('transform');
         });
 
-        // Resolve exact target element
+        // Resolve target element without breaking container dimensions
         const target = el.closest('[data-courseattendeeid]') || 
                        el.closest('.attendeeName') || 
                        el.closest('a[href*="contact.nl"]') || 
@@ -146,14 +139,10 @@
         if (target) {
           target.classList.add('ns-inspector-active-highlight');
 
-          // Apply direct inline styles with !important as fallback for NetSuite table styles
-          target.style.setProperty('outline', '2px solid #ca8a04', 'important');
-          target.style.setProperty('outline-offset', '-1px', 'important');
+          // Direct inline styles that guarantee zero layout reflow
           target.style.setProperty('background-color', '#fef08a', 'important');
-          target.style.setProperty('box-shadow', '0 4px 14px rgba(0, 0, 0, 0.28)', 'important');
-          target.style.setProperty('transform', 'translateY(-2px)', 'important');
-          target.style.setProperty('z-index', '9999', 'important');
-          target.style.setProperty('border-radius', '4px', 'important');
+          target.style.setProperty('box-shadow', 'inset 0 0 0 2px #ca8a04', 'important');
+          target.style.setProperty('border-radius', '2px', 'important');
 
           if (typeof target.scrollIntoView === 'function') {
             target.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
@@ -171,13 +160,12 @@
         if (oDoc) {
           oDoc.querySelectorAll('.ns-inspector-active-highlight').forEach(node => {
             node.classList.remove('ns-inspector-active-highlight');
-            node.style.removeProperty('outline');
-            node.style.removeProperty('outline-offset');
             node.style.removeProperty('box-shadow');
             node.style.removeProperty('background-color');
-            node.style.removeProperty('transform');
-            node.style.removeProperty('z-index');
             node.style.removeProperty('border-radius');
+            node.style.removeProperty('outline');
+            node.style.removeProperty('outline-offset');
+            node.style.removeProperty('transform');
           });
         }
       } catch (e) {}

@@ -60,6 +60,27 @@
     let pdfPipWin = null;
     let cachedMatchingSeminars = null;
 
+    /* Absolute URL Resolver for Cross-Window & PiP Navigation */
+    function getNsOrigin() {
+      try {
+        if (window.opener && window.opener.location && window.opener.location.origin && window.opener.location.origin !== 'null') {
+          return window.opener.location.origin;
+        }
+        if (window.location && window.location.origin && window.location.origin !== 'null') {
+          return window.location.origin;
+        }
+      } catch (e) {}
+      return '';
+    }
+
+    function toAbsoluteNsUrl(url) {
+      if (!url) return '';
+      if (/^https?:\/\//i.test(url)) return url;
+      const origin = getNsOrigin();
+      const path = url.startsWith('/') ? url : ('/' + url);
+      return origin ? (origin + path) : path;
+    }
+
     /* Geometry Memory: Track and save window position and size */
     let lastSavedGeom = '';
     function saveWindowGeometry() {
@@ -84,7 +105,7 @@
     window.addEventListener('pagehide', saveWindowGeometry);
     setInterval(saveWindowGeometry, 1500);
 
-    /* Text-Only Highlighter Styles (Zero Container Disruption) */
+    /* Text-Only Highlighter Styles */
     function ensureBoardStyles(doc) {
       if (!doc) return;
       let s = doc.getElementById('ns-inspector-board-styles');
@@ -516,6 +537,13 @@
         const pipDoc = seminarPipWin.document;
         pipDoc.title = 'Seminar Attendees (Always-on-Top)';
 
+        const origin = getNsOrigin();
+        if (origin && !pipDoc.querySelector('base')) {
+          const baseEl = pipDoc.createElement('base');
+          baseEl.href = origin + '/';
+          pipDoc.head.appendChild(baseEl);
+        }
+
         const s = pipDoc.createElement('style');
         s.textContent = `
           * { box-sizing: border-box; }
@@ -610,7 +638,7 @@
       }
     }
 
-    /* Status Badge Resolver with Priority Matching for Rescheduled, No Show & All Statuses */
+    /* Status Badge Resolver */
     function getStatusBadge(status) {
       if (!status || /^(edit|view)$/i.test(status.trim())) return '';
       const s = status.trim().toLowerCase();
@@ -674,15 +702,17 @@
           cardBorder = 'border-left: 3px solid rgb(192, 132, 252) !important;';
         }
 
-        const editTargetUrl = item.editUrl || (item.contactId ? '/app/common/entity/contact.nl?id=' + item.contactId + '&e=T' : '');
+        const rawEditTarget = item.editUrl || (item.contactId ? '/app/common/entity/contact.nl?id=' + item.contactId + '&e=T' : '');
+        const fullEditUrl = toAbsoluteNsUrl(rawEditTarget);
+        const fullContactUrl = toAbsoluteNsUrl(item.contactId ? '/app/common/entity/contact.nl?id=' + item.contactId : '');
 
         return `
           <div class="glass-card card-contact" style="padding:10px 12px; ${cardBorder}" data-event-card="${item.contactId || item.contactName}">
             <div style="display:flex; justify-content:space-between; align-items:center;">
-              <a href="${item.contactId ? '/app/common/entity/contact.nl?id=' + item.contactId : 'javascript:void(0)'}" target="_blank" style="font-weight:700; font-size:14px; color:white;">${item.contactName}</a>
+              <a href="${fullContactUrl || 'javascript:void(0)'}" data-nav-url="${fullContactUrl}" target="_blank" rel="noopener noreferrer" style="font-weight:700; font-size:14px; color:white;">${item.contactName}</a>
               <div style="display:flex; align-items:center; gap:4px;">
                 ${item.contactId ? `<span class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border-color:rgba(192,132,252,0.4);" data-pdf-contact="${item.contactId}" data-pdf-name="${item.contactName}">📄 PDF</span>` : ''}
-                ${editTargetUrl ? `<a href="${editTargetUrl}" target="_blank" class="pill" style="cursor:pointer; background:rgba(255, 255, 255, 0.12); color:rgb(244, 244, 245); border-color:rgba(255, 255, 255, 0.35); text-decoration:none;" title="Open Record in Edit Mode">EDIT ↗</a>` : ''}
+                ${fullEditUrl ? `<a href="${fullEditUrl}" data-nav-url="${fullEditUrl}" target="_blank" rel="noopener noreferrer" class="pill ns-pip-action-link" style="cursor:pointer; background:rgba(255, 255, 255, 0.12); color:rgb(244, 244, 245); border-color:rgba(255, 255, 255, 0.35); text-decoration:none;" title="Open Record in Edit Mode">EDIT ↗</a>` : ''}
                 ${getStatusBadge(item.status || 'Status Unknown')}
               </div>
             </div>
@@ -700,19 +730,35 @@
           if (cId) {
             activeContactId = cId;
             activeContactName = cNm;
-            activePdfUrl = '/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + cId;
+            activePdfUrl = toAbsoluteNsUrl('/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + cId);
             openPdfPiP();
           }
         };
       });
 
-      listContainer.querySelectorAll('a[href]').forEach(a => {
+      /* Reliable PiP Window Click Handler (Preserves In-Window User Gesture Activation) */
+      listContainer.querySelectorAll('a[data-nav-url]').forEach(a => {
         a.onclick = (e) => {
+          const targetUrl = a.getAttribute('data-nav-url') || a.getAttribute('href');
+          if (!targetUrl || targetUrl === 'javascript:void(0)' || targetUrl.startsWith('#')) return;
+
+          e.preventDefault();
           e.stopPropagation();
-          const url = a.getAttribute('href');
-          if (url && url !== 'javascript:void(0)') {
-            window.open(url, '_blank');
-            e.preventDefault();
+
+          let opened = null;
+          try {
+            if (win && !win.closed) {
+              opened = win.open(targetUrl, '_blank');
+            }
+          } catch (err) {}
+
+          if (!opened) {
+            try {
+              const rootWin = window.opener || window;
+              if (rootWin && !rootWin.closed) {
+                opened = rootWin.open(targetUrl, '_blank');
+              }
+            } catch (err) {}
           }
         };
       });
@@ -1056,10 +1102,10 @@
       return false;
     }
 
-    /* Isolated Event Attendance Parsing: Strictly Targets Event Sublist & Rejects Phantom Directory Rows */
+    /* Isolated Event Attendance Parsing with Comprehensive Edit URL Normalization */
     async function getAllAttendance(clientId) {
       if (cache.eventAttendance.has(clientId)) return cache.eventAttendance.get(clientId);
-      const res = await fetch(`/app/common/entity/custjob.nl?id=${clientId}&selectedtab=custom26`);
+      const res = await fetch('/app/common/entity/custjob.nl?id=${clientId}&selectedtab=custom26');
       const html = await res.text();
       const mainDoc = new DOMParser().parseFromString(html, 'text/html');
       const allDocs = [mainDoc];
@@ -1122,18 +1168,33 @@
             if (!contactName) return;
 
             let rowEditUrl = '';
-            const editA = Array.from(row.querySelectorAll('a')).find(a => {
-              const t = (a.innerText || a.textContent || '').trim().toLowerCase();
-              const h = a.getAttribute('href') || '';
-              return t === 'edit' || h.includes('&e=T') || h.includes('custrecordentry.nl');
-            }) || row.querySelector('a[href*="custrecordentry.nl"], a[href*="&e=T"]');
+            row.querySelectorAll('a').forEach(a => {
+              if (rowEditUrl) return;
+              const href = a.getAttribute('href') || '';
+              const onclick = a.getAttribute('onclick') || '';
+              const txt = (a.innerText || a.textContent || '').trim().toLowerCase();
+              const combined = href + ' ' + onclick;
 
-            if (editA) {
-              const href = editA.getAttribute('href') || '';
-              const onclick = editA.getAttribute('onclick') || '';
-              const m = (href + ' ' + onclick).match(/(?:https?:\/\/[^\s'"]+)?(\/app\/[^\s'"]+)/);
-              if (m) rowEditUrl = m[1];
-              else if (href && !href.startsWith('javascript:')) rowEditUrl = href;
+              if (txt === 'edit' || combined.includes('custrecordentry.nl') || combined.includes('&e=T')) {
+                const mCust = combined.match(/(?:https?:\/\/[^\s'"]+)?(?:\/app\/common\/custom\/|\.\.\/custom\/|custom\/)?(custrecordentry\.nl\?[^'"]+)/i);
+                if (mCust) {
+                  let q = mCust[1].replace(/&amp;/g, '&');
+                  if (!q.startsWith('/app/common/custom/')) q = '/app/common/custom/' + q;
+                  if (!q.includes('&e=T')) q += '&e=T';
+                  rowEditUrl = q;
+                  return;
+                }
+                const mApp = combined.match(/\/app\/[^\s'"]+/);
+                if (mApp) {
+                  let q = mApp[0].replace(/&amp;/g, '&');
+                  if (!q.includes('&e=T') && !q.includes('contact.nl')) q += '&e=T';
+                  rowEditUrl = q;
+                }
+              }
+            });
+
+            if (!rowEditUrl && contactId) {
+              rowEditUrl = '/app/common/entity/contact.nl?id=' + contactId + '&e=T';
             }
 
             const cells = Array.from(row.querySelectorAll('td'));
@@ -1255,7 +1316,7 @@
         const btnClient = document.getElementById('ns-insp-btn-client');
         if (clientInternalId) {
           activeClientInternalId = clientInternalId;
-          btnClient.href = '/app/common/entity/custjob.nl?id=' + clientInternalId;
+          btnClient.href = toAbsoluteNsUrl('/app/common/entity/custjob.nl?id=' + clientInternalId);
           btnClient.textContent = `Open Client (${clientEntityId}) [id=${clientInternalId}]`;
           btnClient.style.pointerEvents = 'auto';
           btnClient.style.opacity = '1';
@@ -1267,10 +1328,10 @@
 
         if (contactId) {
           activeContactId = contactId;
-          activePdfUrl = '/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + contactId;
+          activePdfUrl = toAbsoluteNsUrl('/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + contactId);
 
           const btnContact = document.getElementById('ns-insp-btn-contact');
-          btnContact.href = '/app/common/entity/contact.nl?id=' + contactId;
+          btnContact.href = toAbsoluteNsUrl('/app/common/entity/contact.nl?id=' + contactId);
           btnContact.style.pointerEvents = 'auto';
           btnContact.style.opacity = '1';
 
@@ -1369,13 +1430,14 @@
               if (eventBox && eventItems) {
                 eventBox.style.display = 'block';
                 eventItems.innerHTML = matches.map((m, idx) => {
-                  const editTargetUrl = m.editUrl || (m.contactId ? '/app/common/entity/contact.nl?id=' + m.contactId + '&e=T' : '');
+                  const rawEditTarget = m.editUrl || (m.contactId ? '/app/common/entity/contact.nl?id=' + m.contactId + '&e=T' : '');
+                  const fullEditUrl = toAbsoluteNsUrl(rawEditTarget);
                   return `
                     <div style="${idx > 0 ? 'border-top:1px solid rgba(251,191,36,0.2); padding-top:5px;' : ''}">
                       <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
                         <span style="font-weight:700; color:#fff; font-size:12px;">${m.eventTitle || 'Linked Seminar'}</span>
                         <div style="display:flex; align-items:center; gap:4px;">
-                          ${editTargetUrl ? `<a href="${editTargetUrl}" target="_blank" class="pill" style="cursor:pointer; background:rgba(255, 255, 255, 0.12); color:rgb(244, 244, 245); border-color:rgba(255, 255, 255, 0.35); text-decoration:none;" title="Open Record in Edit Mode">EDIT ↗</a>` : ''}
+                          ${fullEditUrl ? `<a href="${fullEditUrl}" data-nav-url="${fullEditUrl}" target="_blank" rel="noopener noreferrer" class="pill ns-edit-event-btn" style="cursor:pointer; background:rgba(255, 255, 255, 0.12); color:rgb(244, 244, 245); border-color:rgba(255, 255, 255, 0.35); text-decoration:none;" title="Open Record in Edit Mode">EDIT ↗</a>` : ''}
                           ${getStatusBadge(m.status)}
                         </div>
                       </div>
@@ -1383,6 +1445,16 @@
                     </div>
                   `;
                 }).join('');
+
+                eventItems.querySelectorAll('.ns-edit-event-btn').forEach(btn => {
+                  btn.onclick = (e) => {
+                    const u = btn.getAttribute('data-nav-url') || btn.getAttribute('href');
+                    if (!u || u === 'javascript:void(0)') return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.open(u, '_blank');
+                  };
+                });
               }
             } else {
               seminarPill.style.display = 'none';
@@ -1456,7 +1528,7 @@
       document.getElementById('ns-insp-btn-pdf').disabled = true;
 
       const btnAttendee = document.getElementById('ns-insp-btn-attendee');
-      btnAttendee.href = '/app/common/custom/custrecordentry.nl?rectype=56&id=' + attendee.id + '&e=T';
+      btnAttendee.href = toAbsoluteNsUrl('/app/common/custom/custrecordentry.nl?rectype=56&id=' + attendee.id + '&e=T');
       btnAttendee.style.pointerEvents = 'auto';
       btnAttendee.style.opacity = '1';
 
@@ -1621,11 +1693,11 @@
       if (detectedContactId) {
         activeContactId = detectedContactId;
         const btnContact = document.getElementById('ns-insp-btn-contact');
-        btnContact.href = '/app/common/entity/contact.nl?id=' + detectedContactId;
+        btnContact.href = toAbsoluteNsUrl('/app/common/entity/contact.nl?id=' + detectedContactId);
         btnContact.style.pointerEvents = 'auto';
         btnContact.style.opacity = '1';
 
-        activePdfUrl = '/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + detectedContactId;
+        activePdfUrl = toAbsoluteNsUrl('/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + detectedContactId);
         document.getElementById('ns-insp-btn-pdf').disabled = false;
 
         getContactData(detectedContactId).then(cData => {
@@ -1654,7 +1726,7 @@
 
       const btnClient = document.getElementById('ns-insp-btn-client');
       if (clientInternalId) {
-        btnClient.href = '/app/common/entity/custjob.nl?id=' + clientInternalId;
+        btnClient.href = toAbsoluteNsUrl('/app/common/entity/custjob.nl?id=' + clientInternalId);
         btnClient.textContent = `Open Master Client File [id=${clientInternalId}]`;
         btnClient.style.pointerEvents = 'auto';
         btnClient.style.opacity = '1';
@@ -1717,7 +1789,7 @@
             if (matched && matched.contactId) {
               activeContactId = matched.contactId;
               activeContactName = matched.contactName;
-              activePdfUrl = '/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + matched.contactId;
+              activePdfUrl = toAbsoluteNsUrl('/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + matched.contactId);
               document.getElementById('ns-insp-btn-pdf').disabled = false;
               updatePdfPiPIfOpen(activePdfUrl, activeContactName);
 

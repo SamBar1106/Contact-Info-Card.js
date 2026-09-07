@@ -1,20 +1,33 @@
 (function(){
   const WIN_NAME = 'NSSchedulerInspectorAppWindow';
-  const winWidth = 490;
-  const winHeight = Math.min(window.screen.availHeight - 60, 940);
-  const leftPos = Math.max(20, window.screen.availWidth - winWidth - 25);
-  const topPos = 30;
+
+  /* Retrieve saved window geometry from localStorage with safe screen fallbacks */
+  let savedGeom = null;
+  try {
+    savedGeom = JSON.parse(localStorage.getItem('ns_inspector_geom') || 'null');
+  } catch (e) {}
+
+  const defaultWidth = 490;
+  const defaultHeight = Math.min(window.screen.availHeight - 60, 940);
+  const defaultLeft = Math.max(20, window.screen.availWidth - defaultWidth - 25);
+  const defaultTop = 30;
+
+  const winWidth = (savedGeom && savedGeom.width >= 350) ? savedGeom.width : defaultWidth;
+  const winHeight = (savedGeom && savedGeom.height >= 400) ? savedGeom.height : defaultHeight;
+  
+  const leftPos = (savedGeom && typeof savedGeom.left === 'number')
+    ? Math.max(10, Math.min(savedGeom.left, window.screen.availWidth - 120))
+    : defaultLeft;
+  const topPos = (savedGeom && typeof savedGeom.top === 'number')
+    ? Math.max(10, Math.min(savedGeom.top, window.screen.availHeight - 120))
+    : defaultTop;
+
   const winFeatures = 'popup=1,width=' + winWidth + ',height=' + winHeight + ',left=' + leftPos + ',top=' + topPos + ',menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no';
 
   let popup = window.open('', WIN_NAME, winFeatures);
   if (!popup) {
     alert('Pop-up Blocked by Chrome!\n\n1. Click the lock/tune icon in the address bar.\n2. Set "Pop-ups and redirects" to Allow.\n3. Click this bookmark again.');
     return;
-  }
-
-  if (popup.outerWidth > 650) {
-    popup.close();
-    popup = window.open('', WIN_NAME + '_' + Date.now(), winFeatures);
   }
 
   popup.focus();
@@ -46,6 +59,125 @@
     let seminarPipWin = null;
     let pdfPipWin = null;
     let cachedMatchingSeminars = null;
+
+    /* Geometry Memory: Track and save window position and size */
+    let lastSavedGeom = '';
+    function saveWindowGeometry() {
+      try {
+        const w = window.outerWidth || window.innerWidth;
+        const h = window.outerHeight || window.innerHeight;
+        const x = window.screenX !== undefined ? window.screenX : window.screenLeft;
+        const y = window.screenY !== undefined ? window.screenY : window.screenTop;
+
+        if (w >= 350 && h >= 400 && typeof x === 'number' && typeof y === 'number') {
+          const geomKey = `${w}_${h}_${x}_${y}`;
+          if (geomKey !== lastSavedGeom) {
+            lastSavedGeom = geomKey;
+            localStorage.setItem('ns_inspector_geom', JSON.stringify({ width: w, height: h, left: x, top: y }));
+          }
+        }
+      } catch (e) {}
+    }
+
+    window.addEventListener('resize', saveWindowGeometry);
+    window.addEventListener('beforeunload', saveWindowGeometry);
+    window.addEventListener('pagehide', saveWindowGeometry);
+    setInterval(saveWindowGeometry, 1500);
+
+    /* Guaranteed Parent Board Style Injector */
+    function ensureBoardStyles(doc) {
+      if (!doc || doc.getElementById('ns-inspector-board-styles')) return;
+      const s = doc.createElement('style');
+      s.id = 'ns-inspector-board-styles';
+      s.textContent = `
+        @keyframes nsPulseHighlight {
+          0%   { box-shadow: 0 0 8px #00e5ff, inset 0 0 10px rgba(0,229,255,0.6); }
+          50%  { box-shadow: 0 0 22px #00e5ff, inset 0 0 18px rgba(0,229,255,0.9); }
+          100% { box-shadow: 0 0 8px #00e5ff, inset 0 0 10px rgba(0,229,255,0.6); }
+        }
+        .ns-inspector-active-highlight {
+          outline: 3px solid #00e5ff !important;
+          outline-offset: -2px !important;
+          background-color: rgba(0, 229, 255, 0.45) !important;
+          animation: nsPulseHighlight 1.6s infinite ease-in-out !important;
+          position: relative !important;
+          z-index: 9999 !important;
+          border-radius: 3px !important;
+          transition: all 0.15s ease-in-out !important;
+        }
+        .ns-inspector-active-highlight a,
+        .ns-inspector-active-highlight span,
+        .ns-inspector-active-highlight div {
+          color: #000000 !important;
+          font-weight: 800 !important;
+          text-shadow: 0 0 3px #ffffff !important;
+        }
+      `;
+      (doc.head || doc.body).appendChild(s);
+    }
+
+    /* Bulletproof Board Highlighter (Class + Inline Priority Backup) */
+    function highlightBoardElement(el) {
+      try {
+        if (!el) return;
+        const targetDoc = el.ownerDocument || window.opener?.document || document;
+        ensureBoardStyles(targetDoc);
+
+        // Clear previous highlights
+        targetDoc.querySelectorAll('.ns-inspector-active-highlight').forEach(node => {
+          node.classList.remove('ns-inspector-active-highlight');
+          node.style.removeProperty('outline');
+          node.style.removeProperty('outline-offset');
+          node.style.removeProperty('box-shadow');
+          node.style.removeProperty('background-color');
+          node.style.removeProperty('animation');
+          node.style.removeProperty('z-index');
+        });
+
+        // Resolve exact target element
+        const target = el.closest('[data-courseattendeeid]') || 
+                       el.closest('.attendeeName') || 
+                       el.closest('a[href*="contact.nl"]') || 
+                       el.closest('td') || 
+                       el;
+
+        if (target) {
+          target.classList.add('ns-inspector-active-highlight');
+
+          // Apply direct inline styles with !important to defeat NetSuite table CSS
+          target.style.setProperty('outline', '3px solid #00e5ff', 'important');
+          target.style.setProperty('outline-offset', '-2px', 'important');
+          target.style.setProperty('box-shadow', '0 0 18px #00e5ff, inset 0 0 14px rgba(0, 229, 255, 0.7)', 'important');
+          target.style.setProperty('background-color', 'rgba(0, 229, 255, 0.45)', 'important');
+          target.style.setProperty('animation', 'nsPulseHighlight 1.6s infinite ease-in-out', 'important');
+          target.style.setProperty('z-index', '9999', 'important');
+
+          if (typeof target.scrollIntoView === 'function') {
+            target.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to highlight element on board:', err);
+      }
+    }
+
+    // Clean up highlights when the inspector closes
+    window.addEventListener('pagehide', () => {
+      try {
+        const oDoc = window.opener?.document;
+        if (oDoc) {
+          oDoc.querySelectorAll('.ns-inspector-active-highlight').forEach(node => {
+            node.classList.remove('ns-inspector-active-highlight');
+            node.style.removeProperty('outline');
+            node.style.removeProperty('outline-offset');
+            node.style.removeProperty('box-shadow');
+            node.style.removeProperty('background-color');
+            node.style.removeProperty('animation');
+            node.style.removeProperty('z-index');
+          });
+        }
+      } catch (e) {}
+    });
 
     const style = document.createElement('style');
     style.textContent = `
@@ -414,6 +546,37 @@
       }
     }
 
+    /* Status Badge Resolver with Priority Matching for Rescheduled, No Show & All Statuses */
+    function getStatusBadge(status) {
+      if (!status) return '';
+      const s = status.trim().toLowerCase();
+      let bg = 'rgba(255, 255, 255, 0.08)', color = 'rgb(228, 228, 231)', border = 'rgba(255, 255, 255, 0.18)';
+
+      if (s.includes('resched') || s.includes('re-sched')) {
+        bg = 'rgba(249, 115, 22, 0.25)'; color = 'rgb(251, 146, 60)'; border = 'rgba(249, 115, 22, 0.5)';
+      } else if (s.includes('noshow') || s.includes('no show') || s.includes('no-show') || s === 'ns' || s.includes('did not attend') || s.includes('absent')) {
+        bg = 'rgba(239, 68, 68, 0.25)'; color = 'rgb(248, 113, 113)'; border = 'rgba(239, 68, 68, 0.6)';
+      } else if (s.includes('cancel') || s.includes('cxl')) {
+        bg = 'rgba(239, 68, 68, 0.15)'; color = 'rgb(252, 165, 165)'; border = 'rgba(239, 68, 68, 0.35)';
+      } else if (s.includes('confirm')) {
+        bg = 'rgba(34, 197, 94, 0.2)'; color = 'rgb(74, 222, 128)'; border = 'rgba(34, 197, 94, 0.4)';
+      } else if (s.includes('attend') || s.includes('complet') || s.includes('present')) {
+        bg = 'rgba(59, 130, 246, 0.2)'; color = 'rgb(96, 165, 250)'; border = 'rgba(59, 130, 246, 0.4)';
+      } else if (s.includes('wait')) {
+        bg = 'rgba(168, 85, 247, 0.2)'; color = 'rgb(192, 132, 252)'; border = 'rgba(168, 85, 247, 0.4)';
+      } else if (s.includes('sched')) {
+        bg = 'rgba(245, 158, 11, 0.2)'; color = 'rgb(251, 191, 36)'; border = 'rgba(245, 158, 11, 0.4)';
+      } else if (s.includes('reg') || s.includes('enroll')) {
+        bg = 'rgba(20, 184, 166, 0.2)'; color = 'rgb(45, 212, 191)'; border = 'rgba(20, 184, 166, 0.4)';
+      } else if (s.includes('pend') || s.includes('tentat') || s.includes('standby') || s.includes('invited')) {
+        bg = 'rgba(6, 182, 212, 0.2)'; color = 'rgb(103, 232, 249)'; border = 'rgba(6, 182, 212, 0.4)';
+      } else if (s.includes('declin') || s.includes('refus')) {
+        bg = 'rgba(156, 163, 175, 0.2)'; color = 'rgb(209, 213, 219)'; border = 'rgba(156, 163, 175, 0.4)';
+      }
+
+      return `<span class="pill" style="background:${bg}; color:${color}; border-color:${border}; font-size:10px; font-weight:700;">${status}</span>`;
+    }
+
     async function renderSeminarInPiP(list, title, clientName, dates) {
       const win = await getSeminarPiPWindow();
       if (!win) return;
@@ -430,19 +593,37 @@
         return;
       }
 
-      listContainer.innerHTML = list.map(item => `
-        <div class="glass-card card-contact" style="padding:10px 12px;" data-event-card="${item.contactId || item.contactName}">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <a href="${item.contactId ? '/app/common/entity/contact.nl?id=' + item.contactId : 'javascript:void(0)'}" target="_blank" style="font-weight:700; font-size:14px; color:white;">${item.contactName}</a>
-            <div style="display:flex; align-items:center; gap:4px;">
-              ${item.contactId ? `<span class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border-color:rgba(192,132,252,0.4);" data-pdf-contact="${item.contactId}" data-pdf-name="${item.contactName}">📄 PDF</span>` : ''}
-              ${getStatusBadge(item.status)}
+      listContainer.innerHTML = list.map(item => {
+        const s = (item.status || '').toLowerCase();
+        let cardBorder = '';
+        if (s.includes('noshow') || s.includes('no show') || s.includes('no-show') || s === 'ns' || s.includes('did not attend') || s.includes('absent')) {
+          cardBorder = 'border-left: 3px solid rgb(248, 113, 113) !important;';
+        } else if (s.includes('resched') || s.includes('re-sched')) {
+          cardBorder = 'border-left: 3px solid rgb(251, 146, 60) !important;';
+        } else if (s.includes('cancel') || s.includes('cxl')) {
+          cardBorder = 'border-left: 3px solid rgb(239, 68, 68) !important;';
+        } else if (s.includes('confirm')) {
+          cardBorder = 'border-left: 3px solid rgb(74, 222, 128) !important;';
+        } else if (s.includes('attend') || s.includes('complet') || s.includes('present')) {
+          cardBorder = 'border-left: 3px solid rgb(96, 165, 250) !important;';
+        } else if (s.includes('wait')) {
+          cardBorder = 'border-left: 3px solid rgb(192, 132, 252) !important;';
+        }
+
+        return `
+          <div class="glass-card card-contact" style="padding:10px 12px; ${cardBorder}" data-event-card="${item.contactId || item.contactName}">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <a href="${item.contactId ? '/app/common/entity/contact.nl?id=' + item.contactId : 'javascript:void(0)'}" target="_blank" style="font-weight:700; font-size:14px; color:white;">${item.contactName}</a>
+              <div style="display:flex; align-items:center; gap:4px;">
+                ${item.contactId ? `<span class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border-color:rgba(192,132,252,0.4);" data-pdf-contact="${item.contactId}" data-pdf-name="${item.contactName}">📄 PDF</span>` : ''}
+                ${getStatusBadge(item.status || 'Status Unknown')}
+              </div>
             </div>
+            <div style="font-size:12px; font-weight:600; color:rgb(251, 191, 36); margin-top:2px;">${item.eventTitle || title}</div>
+            <div class="contact-card-info" style="font-size:11px; margin-top:4px; border-top:1px solid rgba(255,255,255,0.06); padding-top:4px;">Loading contact details...</div>
           </div>
-          <div style="font-size:12px; font-weight:600; color:rgb(251, 191, 36); margin-top:2px;">${item.eventTitle || title}</div>
-          <div class="contact-card-info" style="font-size:11px; margin-top:4px; border-top:1px solid rgba(255,255,255,0.06); padding-top:4px;">Loading contact details...</div>
-        </div>
-      `).join('');
+        `;
+      }).join('');
 
       listContainer.querySelectorAll('[data-pdf-contact]').forEach(btn => {
         btn.onclick = (e) => {
@@ -476,18 +657,6 @@
         renderSeminarInPiP(cachedMatchingSeminars.list, cachedMatchingSeminars.title, cachedMatchingSeminars.clientName, cachedMatchingSeminars.dates);
       }
     };
-
-    function getStatusBadge(status) {
-      if (!status) return '';
-      const s = status.trim().toLowerCase();
-      let bg = 'rgba(255, 255, 255, 0.08)', color = 'rgb(228, 228, 231)', border = 'rgba(255, 255, 255, 0.18)';
-      if (s.includes('confirm')) { bg = 'rgba(34, 197, 94, 0.2)'; color = 'rgb(74, 222, 128)'; border = 'rgba(34, 197, 94, 0.4)'; }
-      else if (s.includes('sched')) { bg = 'rgba(245, 158, 11, 0.2)'; color = 'rgb(251, 191, 36)'; border = 'rgba(245, 158, 11, 0.4)'; }
-      else if (s.includes('attend') || s.includes('complet')) { bg = 'rgba(59, 130, 246, 0.2)'; color = 'rgb(96, 165, 250)'; border = 'rgba(59, 130, 246, 0.4)'; }
-      else if (s.includes('cancel') || s.includes('noshow') || s.includes('no show')) { bg = 'rgba(239, 68, 68, 0.2)'; color = 'rgb(248, 113, 113)'; border = 'rgba(239, 68, 68, 0.4)'; }
-      else if (s.includes('wait')) { bg = 'rgba(168, 85, 247, 0.2)'; color = 'rgb(192, 132, 252)'; border = 'rgba(168, 85, 247, 0.4)'; }
-      return `<span class="pill" style="background:${bg}; color:${color}; border-color:${border}; font-size:10px;">${status}</span>`;
-    }
 
     function getWeekHeaderMap(el) {
       const mainDoc = window.opener?.document || document;
@@ -809,6 +978,7 @@
       return false;
     }
 
+    /* Column Header-Guided Attendance Parsing with Comprehensive Status Detection */
     async function getAllAttendance(clientId) {
       if (cache.eventAttendance.has(clientId)) return cache.eventAttendance.get(clientId);
       const res = await fetch(`/app/common/entity/custjob.nl?id=${clientId}&selectedtab=custom26`);
@@ -844,30 +1014,74 @@
 
       const results = [];
       allDocs.forEach(d => {
-        d.querySelectorAll('a[href*="contact.nl?id="], a[href*="/entity/contact.nl?id="]').forEach(cLink => {
-          const row = cLink.closest('tr');
-          if (!row || row.querySelector('th')) return;
-          const tbl = row.closest('table');
-          if (tbl && tbl.id && /usernotes|messages|activities|media/i.test(tbl.id)) return;
-          const contactName = (cLink.innerText || cLink.textContent || '').trim();
-          const contactId = cLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] || '';
-          if (!contactName) return;
+        d.querySelectorAll('table').forEach(tbl => {
+          if (tbl.id && /usernotes|messages|activities|media/i.test(tbl.id)) return;
 
-          let attendanceDate = '', seminarTitle = '', attendanceStatus = '', contactPos = '';
-          row.querySelectorAll('td').forEach(cell => {
-            if (cell.contains(cLink)) return;
-            const text = (cell.innerText || cell.textContent || '').replace(/\s+/g, ' ').trim();
-            if (/\b\d{1,2}-[A-Za-z]{3}-\d{2,4}\b|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i.test(text)) attendanceDate = text;
-            else if (/^(scheduled|attended|confirmed|cancelled|noshow|registered|waitlist|completed)$/i.test(text)) attendanceStatus = text;
-            else if (!seminarTitle && text.length > 4 && !/^(edit|view)$/i.test(text)) seminarTitle = text;
-          });
-
-          if (seminarTitle || attendanceDate) {
-            const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}`;
-            if (!results.some(r => r.compoundKey === compoundKey)) {
-              results.push({ contactName, contactId, eventTitle: seminarTitle, date: attendanceDate, status: attendanceStatus, position: contactPos, compoundKey });
-            }
+          let colMap = { status: -1, date: -1, title: -1 };
+          const headerRow = tbl.querySelector('tr.uir-list-header-tr, tr[id*="header"], tr:has(th), tr:has(td.listheadertd)');
+          if (headerRow) {
+            Array.from(headerRow.children).forEach((cell, idx) => {
+              const hTxt = (cell.innerText || cell.textContent || '').trim().toLowerCase();
+              if (hTxt.includes('status')) colMap.status = idx;
+              else if (hTxt.includes('date')) colMap.date = idx;
+              else if (hTxt.includes('event') || hTxt.includes('seminar') || hTxt.includes('title') || hTxt.includes('course')) colMap.title = idx;
+            });
           }
+
+          tbl.querySelectorAll('a[href*="contact.nl?id="], a[href*="/entity/contact.nl?id="]').forEach(cLink => {
+            const row = cLink.closest('tr');
+            if (!row || row.querySelector('th') || row === headerRow) return;
+
+            const contactName = (cLink.innerText || cLink.textContent || '').trim();
+            const contactId = cLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] || '';
+            if (!contactName) return;
+
+            const cells = Array.from(row.querySelectorAll('td'));
+            let attendanceStatus = '';
+            let attendanceDate = '';
+            let seminarTitle = '';
+
+            if (colMap.status !== -1 && cells[colMap.status]) {
+              attendanceStatus = (cells[colMap.status].innerText || cells[colMap.status].textContent || '').replace(/\s+/g, ' ').trim();
+            }
+            if (colMap.date !== -1 && cells[colMap.date]) {
+              attendanceDate = (cells[colMap.date].innerText || cells[colMap.date].textContent || '').replace(/\s+/g, ' ').trim();
+            }
+            if (colMap.title !== -1 && cells[colMap.title]) {
+              seminarTitle = (cells[colMap.title].innerText || cells[colMap.title].textContent || '').replace(/\s+/g, ' ').trim();
+            }
+
+            cells.forEach(cell => {
+              if (cell.contains(cLink)) return;
+              const text = (cell.innerText || cell.textContent || '').replace(/\s+/g, ' ').trim();
+              if (!text || /^(edit|view)$/i.test(text)) return;
+
+              if (!attendanceDate && /\b\d{1,2}-[A-Za-z]{3}-\d{2,4}\b|\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i.test(text)) {
+                attendanceDate = text;
+              } else if (!attendanceStatus && /\b(scheduled|rescheduled|re-scheduled|resched|attended|confirmed|cancell?ed|no[-\s]?show|noshow|ns|registered|enrolled|waitlist(ed)?|wait[-\s]?list|completed|invited|declined|tentative|pending|standby|present|did not attend|absent)\b/i.test(text)) {
+                attendanceStatus = text;
+              } else if (!seminarTitle && text.length > 3) {
+                const isStatusWord = /\b(scheduled|rescheduled|confirmed|cancell?ed|no[-\s]?show|attended|completed|waitlist)\b/i.test(text);
+                if (!isStatusWord && !/^\d+$/.test(text)) {
+                  seminarTitle = text;
+                }
+              }
+            });
+
+            if (seminarTitle || attendanceDate || attendanceStatus) {
+              const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}_${attendanceStatus}`;
+              if (!results.some(r => r.compoundKey === compoundKey)) {
+                results.push({ 
+                  contactName, 
+                  contactId, 
+                  eventTitle: seminarTitle, 
+                  date: attendanceDate, 
+                  status: attendanceStatus || 'Scheduled', 
+                  compoundKey 
+                });
+              }
+            }
+          });
         });
       });
 
@@ -1017,7 +1231,7 @@
               const isThisContact = (contactId && item.contactId === contactId) ||
                 (attendee.attendeeName && item.contactName.toLowerCase().includes(attendee.attendeeName.toLowerCase()));
               if (!isThisContact) return false;
-              if (item.status && /cancel|noshow|no show/i.test(item.status)) return false;
+              if (item.status && /cancel/i.test(item.status)) return false;
               return isEventInOpenWeeks(item, openBoardInfo);
             });
 
@@ -1083,6 +1297,9 @@
       activePdfUrl = '';
       cachedMatchingSeminars = null;
 
+      /* Highlight clicked attendee on the main scheduling board */
+      highlightBoardElement(attendee.element);
+
       setPdfPiPLoading(attendee.attendeeName);
       closeSeminarPiP();
       seminarPill.style.display = 'none';
@@ -1128,13 +1345,12 @@
       fetchAttendeeRecord(attendee);
     }
 
-    /* Robust Multi-Strategy Client & Contact Resolver for Event Mode */
+    /* Multi-Strategy Client & Contact Resolver for Event Mode */
     async function resolveEventClientAndContact(eventTarget, clickedCell, tr) {
       let detectedContactId = null;
       let clientInternalId = null;
       let clientDisplayText = '';
 
-      // 1. Detect contact ID if clicked or present in row
       const contactLink = eventTarget.closest('a[href*="contact.nl?id="]') || 
                           clickedCell.querySelector('a[href*="contact.nl?id="]') || 
                           (tr ? tr.querySelector('a[href*="contact.nl?id="]') : null);
@@ -1142,14 +1358,12 @@
         detectedContactId = contactLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] || null;
       }
 
-      // 2. Direct data attributes on cell, row, or parents
       const candidates = [clickedCell, eventTarget, tr].filter(Boolean);
       for (const el of candidates) {
         const id = el.getAttribute('data-clientid') || el.getAttribute('data-customerid') || el.dataset?.clientid || el.dataset?.customerid;
         if (id && /^\d+$/.test(id)) { clientInternalId = id; break; }
       }
 
-      // 3. Look for client links or clientRecord cells inside row
       if (!clientInternalId && tr) {
         const clientLink = tr.querySelector('a[href*="custjob.nl?id="], a[href*="customer.nl?id="], a[href*="company.nl?id="]');
         if (clientLink) {
@@ -1158,7 +1372,6 @@
         }
       }
 
-      // 4. Check clientRecord cells
       if (!clientInternalId && tr) {
         const clientCell = tr.querySelector('td.clientRecord, [data-clientid], [data-customerid]');
         if (clientCell) {
@@ -1168,14 +1381,12 @@
         }
       }
 
-      // 5. Match from regex in row HTML (onclicks, urls)
       if (!clientInternalId && tr) {
         const html = tr.outerHTML || '';
         const m = html.match(/(?:custjob\.nl|customer\.nl)\?[^"']*id=(\d+)/i) || html.match(/(?:customer|custjob|client)[^0-9]*(\d{4,})/i);
         if (m) clientInternalId = m[1];
       }
 
-      // 6. Look upwards in previous table rows (some boards use client divider rows)
       if (!clientInternalId && tr) {
         let prev = tr.previousElementSibling;
         while (prev && !isSeminarHeader(prev)) {
@@ -1190,7 +1401,6 @@
         }
       }
 
-      // 7. If contact is known but client isn't, fetch contact.nl directly to resolve company
       if (!clientInternalId && detectedContactId) {
         try {
           const cData = await getContactData(detectedContactId);
@@ -1200,7 +1410,6 @@
         } catch (e) {}
       }
 
-      // 8. Fallback client text starting with digits
       if (!clientInternalId && clientDisplayText) {
         const m = clientDisplayText.match(/^(\d{3,})/);
         if (m) clientInternalId = m[1];
@@ -1212,6 +1421,9 @@
     async function selectEventAttendee(eventTarget) {
       const clickedCell = eventTarget.closest('td, th, [data-clientid], [data-customerid]') || eventTarget;
       const tr = clickedCell.closest('tr');
+
+      /* Highlight clicked attendee on the main scheduling board */
+      highlightBoardElement(eventTarget);
 
       const nameEl = clickedCell.querySelector('.attendeeName') || clickedCell.closest('.attendeeName') || clickedCell;
       let cleanAttendeeName = '';
@@ -1226,9 +1438,18 @@
       const boardEvent = findBoardEvent(clickedCell);
       const eventDisplayHeader = boardEvent ? boardEvent.rawText : (cleanAttendeeName + ' Seminar');
 
+      const isNoShow = !!(clickedCell.querySelector('.isNoShow') || /\bstatus(noshow|no-show|ns)\b/i.test(clickedCell.className) || /\bno[-\s]?show\b/i.test(clickedCell.innerText || ''));
+      const isResched = !!(clickedCell.querySelector('.isResched') || /\bstatus(resched|rsch)\b/i.test(clickedCell.className) || /\bre[-\s]?sched(ule|uled)?\b/i.test(clickedCell.innerText || ''));
+      const isCancel = !!(clickedCell.querySelector('.isCancel') || /\bstatus(cancel|cxl)\b/i.test(clickedCell.className) || /\bcancell?ed\b/i.test(clickedCell.innerText || ''));
       const isConf = !!(clickedCell.querySelector('.isConfirmed') || clickedCell.classList.contains('statusConf'));
       const isSchd = !!(clickedCell.classList.contains('statusSchd'));
-      const fallbackStatus = isConf ? 'Confirmed' : (isSchd ? 'Scheduled' : '');
+      
+      let fallbackStatus = '';
+      if (isNoShow) fallbackStatus = 'No Show';
+      else if (isResched) fallbackStatus = 'Rescheduled';
+      else if (isCancel) fallbackStatus = 'Cancelled';
+      else if (isConf) fallbackStatus = 'Confirmed';
+      else if (isSchd) fallbackStatus = 'Scheduled';
 
       activeAttendeeId = null;
       activeContactId = null;
@@ -1272,12 +1493,10 @@
         d.getElementById('pip-event-contacts-list').innerHTML = '<div style="color:rgb(161, 161, 170);">Querying records...</div>';
       }
 
-      // Execute multi-strategy lookup
       const { clientInternalId, detectedContactId, clientDisplayText } = await resolveEventClientAndContact(eventTarget, clickedCell, tr);
       activeClientInternalId = clientInternalId;
       document.getElementById('ns-insp-pill-id').textContent = clientInternalId ? ('Client ID: ' + clientInternalId) : 'Event Mode';
 
-      // Bind and load Contact info if available
       if (detectedContactId) {
         activeContactId = detectedContactId;
         const btnContact = document.getElementById('ns-insp-btn-contact');
@@ -1312,7 +1531,6 @@
         document.getElementById('ns-insp-contact-comments').textContent = 'Viewing seminar attendance in Document Picture-in-Picture window.';
       }
 
-      // Bind and load Client info if resolved
       const btnClient = document.getElementById('ns-insp-btn-client');
       if (clientInternalId) {
         btnClient.href = '/app/common/entity/custjob.nl?id=' + clientInternalId;
@@ -1373,7 +1591,6 @@
           };
           renderSeminarInPiP(displayAttendance, eventDisplayHeader, cleanAttendeeName, dateBlock);
 
-          // If contact wasn't detected by DOM click, match contact by attendee name in attendance roster
           if (!activeContactId && displayAttendance.length > 0) {
             const matched = displayAttendance.find(i => cleanAttendeeName && i.contactName.toLowerCase().includes(cleanAttendeeName.toLowerCase())) || displayAttendance[0];
             if (matched && matched.contactId) {
@@ -1527,10 +1744,15 @@
       try {
         if (!window.opener || window.opener.closed) { setBridgeStatus(false); return; }
         const oDoc = window.opener.document;
-        if (oDoc && oDoc.body && !oDoc.__nsInspectorBridgeHooked) {
-          oDoc.__nsInspectorBridgeHooked = true;
-          oDoc.addEventListener('click', onBoardClick, true);
-          setBridgeStatus(true);
+        if (oDoc && oDoc.body) {
+          // Unconditionally inject board styles on every poll
+          ensureBoardStyles(oDoc);
+
+          if (!oDoc.__nsInspectorBridgeHooked) {
+            oDoc.__nsInspectorBridgeHooked = true;
+            oDoc.addEventListener('click', onBoardClick, true);
+            setBridgeStatus(true);
+          }
         }
       } catch (err) {
         setBridgeStatus(false);

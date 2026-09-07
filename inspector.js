@@ -178,7 +178,6 @@
               <span class="pill" id="ns-insp-pill-id">Attendee ID: --</span>
             </div>
 
-            <!-- ATTENDING EVENT BANNER -->
             <div id="ns-insp-linked-event-box" style="display:none; margin-top:8px; padding:8px 10px; border-radius:8px; background:rgba(251, 191, 36, 0.12); border:1px solid rgba(251, 191, 36, 0.35);">
               <div class="field-label" style="color:rgb(251, 191, 36); font-size:10px; margin-bottom:4px;">📅 Attending Event This Week</div>
               <div id="ns-insp-linked-event-items" style="display:flex; flex-direction:column; gap:6px;"></div>
@@ -639,12 +638,24 @@
       const html = await res.text();
       const doc = new DOMParser().parseFromString(html, 'text/html');
 
+      let companyId = safeLookupSS1('contact', contactId, 'company') || safeLookupSS1('contact', contactId, 'parentcustomer');
+      if (!companyId) {
+        const compLink = doc.querySelector('a[href*="custjob.nl?id="], a[href*="customer.nl?id="], [id="company_val"] a, [id="parent_val"] a');
+        const m = (compLink?.getAttribute('href') || '').match(/[?&]id=(\d+)/);
+        if (m) companyId = m[1];
+      }
+      if (!companyId) {
+        const m = html.match(/(?:custjob\.nl|customer\.nl)\?[^"']*id=(\d+)/i);
+        if (m) companyId = m[1];
+      }
+
       const data = {
         name: safeLookupSS1('contact', contactId, 'entityid') || getNetSuiteViewField(doc, 'entityid', ['Contact', 'Name']) || (doc.querySelector('.uir-page-title, h1')?.innerText || '').trim(),
         position: safeLookupSS1('contact', contactId, 'title') || getNetSuiteViewField(doc, 'title', ['Position', 'Position/Post']) || '',
         email: safeLookupSS1('contact', contactId, 'email') || getNetSuiteViewField(doc, 'email', ['Email']) || html.match(/mailto:([^"'>\s]+)/i)?.[1] || '',
         phone: safeLookupSS1('contact', contactId, 'phone') || safeLookupSS1('contact', contactId, 'mobilephone') || getNetSuiteViewField(doc, 'mobilephone', ['Cell Phone 1']) || getNetSuiteViewField(doc, 'phone', ['Main Phone']) || html.match(/tel:([^"'>\s]+)/i)?.[1] || '',
-        comments: safeLookupSS1('contact', contactId, 'comments') || getNetSuiteViewField(doc, 'comments', ['Comments']) || 'None recorded'
+        comments: safeLookupSS1('contact', contactId, 'comments') || getNetSuiteViewField(doc, 'comments', ['Comments']) || 'None recorded',
+        companyId: companyId || ''
       };
 
       cache.contacts.set(contactId, data);
@@ -1117,42 +1128,90 @@
       fetchAttendeeRecord(attendee);
     }
 
-    /* Patched: selectEventAttendee with robust ID lookup & state reset */
-    async function selectEventAttendee(eventTarget) {
-      const clickedCell = eventTarget.closest('td, th, [data-clientid], [data-customerid]') || eventTarget;
-      const tr = clickedCell.closest('tr');
+    /* Robust Multi-Strategy Client & Contact Resolver for Event Mode */
+    async function resolveEventClientAndContact(eventTarget, clickedCell, tr) {
+      let detectedContactId = null;
+      let clientInternalId = null;
+      let clientDisplayText = '';
 
-      // Comprehensive client ID discovery across the cell, the row, and child links
-      let clientInternalId = clickedCell.getAttribute('data-clientid') || clickedCell.getAttribute('data-customerid') || clickedCell.dataset?.clientid || clickedCell.dataset?.customerid;
-
-      if (!clientInternalId && tr) {
-        clientInternalId = tr.getAttribute('data-clientid') || tr.getAttribute('data-customerid') || tr.dataset?.clientid || tr.dataset?.customerid;
+      // 1. Detect contact ID if clicked or present in row
+      const contactLink = eventTarget.closest('a[href*="contact.nl?id="]') || 
+                          clickedCell.querySelector('a[href*="contact.nl?id="]') || 
+                          (tr ? tr.querySelector('a[href*="contact.nl?id="]') : null);
+      if (contactLink) {
+        detectedContactId = contactLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] || null;
       }
 
+      // 2. Direct data attributes on cell, row, or parents
+      const candidates = [clickedCell, eventTarget, tr].filter(Boolean);
+      for (const el of candidates) {
+        const id = el.getAttribute('data-clientid') || el.getAttribute('data-customerid') || el.dataset?.clientid || el.dataset?.customerid;
+        if (id && /^\d+$/.test(id)) { clientInternalId = id; break; }
+      }
+
+      // 3. Look for client links or clientRecord cells inside row
       if (!clientInternalId && tr) {
-        const clientEl = tr.querySelector('[data-clientid], [data-customerid], a[href*="custjob.nl?id="], a[href*="customer.nl?id="], td.clientRecord');
-        if (clientEl) {
-          clientInternalId = clientEl.getAttribute('data-clientid') || clientEl.getAttribute('data-customerid') || clientEl.dataset?.clientid || clientEl.dataset?.customerid;
-          if (!clientInternalId) {
-            const m = (clientEl.getAttribute('href') || clientEl.outerHTML || '').match(/(?:custjob\.nl|customer\.nl)\?[^"']*id=(\d+)/i);
-            if (m) clientInternalId = m[1];
-          }
+        const clientLink = tr.querySelector('a[href*="custjob.nl?id="], a[href*="customer.nl?id="], a[href*="company.nl?id="]');
+        if (clientLink) {
+          clientInternalId = clientLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] || null;
+          clientDisplayText = (clientLink.innerText || clientLink.textContent || '').trim();
         }
       }
 
-      if (!clientInternalId) {
-        const raw = (tr || clickedCell).outerHTML || '';
-        const idM = raw.match(/(?:custjob\.nl|customer\.nl)\?[^"']*id=(\d+)/i);
-        if (idM) clientInternalId = idM[1];
+      // 4. Check clientRecord cells
+      if (!clientInternalId && tr) {
+        const clientCell = tr.querySelector('td.clientRecord, [data-clientid], [data-customerid]');
+        if (clientCell) {
+          const id = clientCell.getAttribute('data-clientid') || clientCell.getAttribute('data-customerid') || clientCell.dataset?.clientid || clientCell.dataset?.customerid;
+          if (id && /^\d+$/.test(id)) clientInternalId = id;
+          if (!clientDisplayText) clientDisplayText = (clientCell.innerText || clientCell.textContent || '').trim();
+        }
       }
 
-      // Check if clicked element relates to a contact
-      const contactLink = eventTarget.closest('a[href*="contact.nl?id="]') || clickedCell.querySelector('a[href*="contact.nl?id="]') || (tr ? tr.querySelector('a[href*="contact.nl?id="]') : null);
-      const detectedContactId = contactLink ? contactLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] : null;
+      // 5. Match from regex in row HTML (onclicks, urls)
+      if (!clientInternalId && tr) {
+        const html = tr.outerHTML || '';
+        const m = html.match(/(?:custjob\.nl|customer\.nl)\?[^"']*id=(\d+)/i) || html.match(/(?:customer|custjob|client)[^0-9]*(\d{4,})/i);
+        if (m) clientInternalId = m[1];
+      }
 
+      // 6. Look upwards in previous table rows (some boards use client divider rows)
+      if (!clientInternalId && tr) {
+        let prev = tr.previousElementSibling;
+        while (prev && !isSeminarHeader(prev)) {
+          const id = prev.getAttribute('data-clientid') || prev.getAttribute('data-customerid') || prev.dataset?.clientid || prev.dataset?.customerid;
+          if (id && /^\d+$/.test(id)) { clientInternalId = id; break; }
+          const link = prev.querySelector('a[href*="custjob.nl?id="], a[href*="customer.nl?id="]');
+          if (link) {
+            const m = link.getAttribute('href')?.match(/[?&]id=(\d+)/);
+            if (m) { clientInternalId = m[1]; break; }
+          }
+          prev = prev.previousElementSibling;
+        }
+      }
+
+      // 7. If contact is known but client isn't, fetch contact.nl directly to resolve company
       if (!clientInternalId && detectedContactId) {
-        clientInternalId = safeLookupSS1('contact', detectedContactId, 'company') || safeLookupSS1('contact', detectedContactId, 'parentcustomer');
+        try {
+          const cData = await getContactData(detectedContactId);
+          if (cData && cData.companyId) {
+            clientInternalId = cData.companyId;
+          }
+        } catch (e) {}
       }
+
+      // 8. Fallback client text starting with digits
+      if (!clientInternalId && clientDisplayText) {
+        const m = clientDisplayText.match(/^(\d{3,})/);
+        if (m) clientInternalId = m[1];
+      }
+
+      return { clientInternalId, detectedContactId, clientDisplayText };
+    }
+
+    async function selectEventAttendee(eventTarget) {
+      const clickedCell = eventTarget.closest('td, th, [data-clientid], [data-customerid]') || eventTarget;
+      const tr = clickedCell.closest('tr');
 
       const nameEl = clickedCell.querySelector('.attendeeName') || clickedCell.closest('.attendeeName') || clickedCell;
       let cleanAttendeeName = '';
@@ -1171,10 +1230,8 @@
       const isSchd = !!(clickedCell.classList.contains('statusSchd'));
       const fallbackStatus = isConf ? 'Confirmed' : (isSchd ? 'Scheduled' : '');
 
-      // Reset application state
       activeAttendeeId = null;
-      activeClientInternalId = clientInternalId || null;
-      activeContactId = detectedContactId || null;
+      activeContactId = null;
       activeContactName = cleanAttendeeName || '';
       activePdfUrl = '';
       cachedMatchingSeminars = null;
@@ -1186,44 +1243,24 @@
 
       document.getElementById('ns-insp-contact-name').textContent = cleanAttendeeName || 'Event Attendee(s)';
       document.getElementById('ns-insp-position').textContent = 'Seminar Participant';
-      document.getElementById('ns-insp-contact-phone').innerHTML = '-';
-      document.getElementById('ns-insp-contact-email').innerHTML = '-';
-      document.getElementById('ns-insp-contact-comments').textContent = 'Viewing seminar attendance in Document Picture-in-Picture window.';
-      document.getElementById('ns-insp-btn-contact').style.pointerEvents = 'none';
-      document.getElementById('ns-insp-btn-contact').style.opacity = '0.35';
-      document.getElementById('ns-insp-btn-pdf').disabled = true;
-      document.getElementById('ns-insp-btn-attendee').style.pointerEvents = 'none';
-      document.getElementById('ns-insp-btn-attendee').style.opacity = '0.35';
+      document.getElementById('ns-insp-contact-phone').innerHTML = '...';
+      document.getElementById('ns-insp-contact-email').innerHTML = '...';
+      document.getElementById('ns-insp-contact-comments').textContent = 'Querying attendee file...';
 
       const dateBlock = (boardEvent && boardEvent.dateStr) ? `<div>${boardEvent.dateStr}</div>` : schedDatesHtml;
       document.getElementById('ns-insp-sched-day').innerHTML = `${dateBlock}${fallbackStatus ? `<div style="margin-top:4px;">${getStatusBadge(fallbackStatus)}</div>` : ''}`;
-      document.getElementById('ns-insp-pill-id').textContent = clientInternalId ? ('Client ID: ' + clientInternalId) : 'Event Mode';
 
-      // Reset Client Info DOM fields immediately
-      document.getElementById('ns-insp-full-client').textContent = clientInternalId ? 'Loading client...' : cleanAttendeeName;
+      document.getElementById('ns-insp-full-client').textContent = 'Resolving client...';
       document.getElementById('ns-insp-work-phone').innerHTML = '...';
       document.getElementById('ns-insp-email').innerHTML = '...';
       document.getElementById('ns-insp-cell-1').innerHTML = '...';
       document.getElementById('ns-insp-cell-2').innerHTML = '...';
       document.getElementById('ns-insp-comments').textContent = '...';
-      document.getElementById('ns-insp-client-fetch-status').textContent = clientInternalId ? 'Fetching...' : '-';
+      document.getElementById('ns-insp-client-fetch-status').textContent = 'Fetching...';
       document.getElementById('ns-insp-client-fetch-status').style.color = 'rgb(161, 161, 170)';
 
       document.getElementById('ns-insp-notes-count').textContent = '-';
-      document.getElementById('ns-insp-notes-list').innerHTML = '<div style="color:rgb(161, 161, 170);">' + (clientInternalId ? 'Loading notes...' : 'Waiting for click...') + '</div>';
-      document.getElementById('ns-insp-btn-save-note').disabled = !clientInternalId;
-
-      const btnClient = document.getElementById('ns-insp-btn-client');
-      if (clientInternalId) {
-        btnClient.href = '/app/common/entity/custjob.nl?id=' + clientInternalId;
-        btnClient.textContent = `Open Master Client File [id=${clientInternalId}]`;
-        btnClient.style.pointerEvents = 'auto';
-        btnClient.style.opacity = '1';
-      } else {
-        btnClient.style.pointerEvents = 'none';
-        btnClient.style.opacity = '0.35';
-        btnClient.textContent = 'Open Master Client File (custjob.nl)';
-      }
+      document.getElementById('ns-insp-notes-list').innerHTML = '<div style="color:rgb(161, 161, 170);">Loading notes...</div>';
 
       const win = await getSeminarPiPWindow();
       if (win) {
@@ -1235,17 +1272,60 @@
         d.getElementById('pip-event-contacts-list').innerHTML = '<div style="color:rgb(161, 161, 170);">Querying records...</div>';
       }
 
+      // Execute multi-strategy lookup
+      const { clientInternalId, detectedContactId, clientDisplayText } = await resolveEventClientAndContact(eventTarget, clickedCell, tr);
+      activeClientInternalId = clientInternalId;
+      document.getElementById('ns-insp-pill-id').textContent = clientInternalId ? ('Client ID: ' + clientInternalId) : 'Event Mode';
+
+      // Bind and load Contact info if available
+      if (detectedContactId) {
+        activeContactId = detectedContactId;
+        const btnContact = document.getElementById('ns-insp-btn-contact');
+        btnContact.href = '/app/common/entity/contact.nl?id=' + detectedContactId;
+        btnContact.style.pointerEvents = 'auto';
+        btnContact.style.opacity = '1';
+
+        activePdfUrl = '/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + detectedContactId;
+        document.getElementById('ns-insp-btn-pdf').disabled = false;
+
+        getContactData(detectedContactId).then(cData => {
+          activeContactName = cData.name || cleanAttendeeName;
+          document.getElementById('ns-insp-contact-name').textContent = activeContactName;
+          document.getElementById('ns-insp-position').textContent = cData.position || 'Seminar Participant';
+          document.getElementById('ns-insp-contact-phone').innerHTML = cData.phone ? `<a href="tel:${cData.phone}">${cData.phone}</a>` : '-';
+          document.getElementById('ns-insp-contact-comments').textContent = cData.comments || 'None recorded';
+
+          if (cData.email) {
+            const rawSched = document.getElementById('ns-insp-sched-day')?.innerText.trim() || 'Scheduled Dates';
+            const isDoctor = (cData.position || '').toLowerCase().includes('doctor');
+            const greetingName = isDoctor && !/^dr\./i.test(activeContactName) ? `Dr. ${activeContactName}` : activeContactName;
+            const subject = encodeURIComponent('Checking In: Travel Plans for MGE Course Sessions');
+            const body = encodeURIComponent(`Hello ${greetingName},\n\nI hope you're doing well.\n\nI have you scheduled for the course room on the following dates:\n\n${rawSched}\n\nI wanted to check in and see if you've been able to make your flight and hotel reservations yet. Please let me know if you need any assistance with your travel plans.\n\nI look forward to hearing from you.`);
+            document.getElementById('ns-insp-contact-email').innerHTML = `<a href="mailto:${cData.email.trim()}?subject=${subject}&body=${body}">${cData.email}</a>`;
+          } else {
+            document.getElementById('ns-insp-contact-email').innerHTML = '-';
+          }
+
+          updatePdfPiPIfOpen(activePdfUrl, activeContactName);
+        });
+      } else {
+        document.getElementById('ns-insp-contact-comments').textContent = 'Viewing seminar attendance in Document Picture-in-Picture window.';
+      }
+
+      // Bind and load Client info if resolved
+      const btnClient = document.getElementById('ns-insp-btn-client');
       if (clientInternalId) {
+        btnClient.href = '/app/common/entity/custjob.nl?id=' + clientInternalId;
+        btnClient.textContent = `Open Master Client File [id=${clientInternalId}]`;
+        btnClient.style.pointerEvents = 'auto';
+        btnClient.style.opacity = '1';
+        document.getElementById('ns-insp-btn-save-note').disabled = false;
+
         const capturedId = clientInternalId;
-        getClientData(capturedId, cleanAttendeeName).then(clientData => {
+        getClientData(capturedId, clientDisplayText || cleanAttendeeName).then(clientData => {
           if (activeClientInternalId !== capturedId) return;
 
           document.getElementById('ns-insp-full-client').textContent = clientData.companyName || cleanAttendeeName;
-          
-          // Fixed: Guarded update to avoid throwing a null exception
-          const eventBoxClientEl = document.getElementById('ns-event-box-client');
-          if (eventBoxClientEl) eventBoxClientEl.textContent = 'Client: ' + (clientData.companyName || cleanAttendeeName);
-
           document.getElementById('ns-insp-work-phone').innerHTML = clientData.workPhone ? `<a href="tel:${clientData.workPhone}">${clientData.workPhone}</a>` : '-';
           document.getElementById('ns-insp-email').innerHTML = clientData.email ? `<a href="mailto:${clientData.email}">${clientData.email}</a>` : '-';
           document.getElementById('ns-insp-comments').textContent = clientData.comments || 'None recorded';
@@ -1264,8 +1344,7 @@
           }
           document.getElementById('ns-insp-client-fetch-status').textContent = 'Resolved';
           document.getElementById('ns-insp-client-fetch-status').style.color = 'rgb(52, 211, 153)';
-        }).catch(err => {
-          console.error('Failed to load client data in event mode:', err);
+        }).catch(() => {
           if (activeClientInternalId === capturedId) {
             document.getElementById('ns-insp-client-fetch-status').textContent = 'Error';
             document.getElementById('ns-insp-client-fetch-status').style.color = 'rgb(248, 113, 113)';
@@ -1294,15 +1373,36 @@
           };
           renderSeminarInPiP(displayAttendance, eventDisplayHeader, cleanAttendeeName, dateBlock);
 
-          if (displayAttendance.length > 0 && displayAttendance[0].contactId) {
-            activeContactId = displayAttendance[0].contactId;
-            activeContactName = displayAttendance[0].contactName;
-            activePdfUrl = '/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + activeContactId;
-            const btnPdf = document.getElementById('ns-insp-btn-pdf');
-            btnPdf.disabled = false;
-            updatePdfPiPIfOpen(activePdfUrl, activeContactName);
+          // If contact wasn't detected by DOM click, match contact by attendee name in attendance roster
+          if (!activeContactId && displayAttendance.length > 0) {
+            const matched = displayAttendance.find(i => cleanAttendeeName && i.contactName.toLowerCase().includes(cleanAttendeeName.toLowerCase())) || displayAttendance[0];
+            if (matched && matched.contactId) {
+              activeContactId = matched.contactId;
+              activeContactName = matched.contactName;
+              activePdfUrl = '/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=' + matched.contactId;
+              document.getElementById('ns-insp-btn-pdf').disabled = false;
+              updatePdfPiPIfOpen(activePdfUrl, activeContactName);
+
+              getContactData(matched.contactId).then(cData => {
+                document.getElementById('ns-insp-contact-name').textContent = cData.name || matched.contactName;
+                document.getElementById('ns-insp-position').textContent = cData.position || 'Seminar Participant';
+                document.getElementById('ns-insp-contact-phone').innerHTML = cData.phone ? `<a href="tel:${cData.phone}">${cData.phone}</a>` : '-';
+                document.getElementById('ns-insp-contact-comments').textContent = cData.comments || 'None recorded';
+                if (cData.email) {
+                  document.getElementById('ns-insp-contact-email').innerHTML = `<a href="mailto:${cData.email.trim()}">${cData.email}</a>`;
+                }
+              });
+            }
           }
         });
+      } else {
+        document.getElementById('ns-insp-full-client').textContent = cleanAttendeeName || 'Client ID not detected';
+        document.getElementById('ns-insp-client-fetch-status').textContent = 'Not Found';
+        document.getElementById('ns-insp-client-fetch-status').style.color = 'rgb(251, 191, 36)';
+        document.getElementById('ns-insp-notes-list').innerHTML = '<div style="color:rgb(161, 161, 170);">Click attendee or client link directly to load client notes.</div>';
+        btnClient.style.pointerEvents = 'none';
+        btnClient.style.opacity = '0.35';
+        document.getElementById('ns-insp-btn-save-note').disabled = true;
       }
     }
 
@@ -1331,7 +1431,7 @@
 
         const itemHtml = `<div class="note-item" style="border-left-color:rgb(56,189,248);"><div class="note-header"><span class="note-author">You</span><span>Just now</span></div><div class="note-body">${val}</div></div>`;
         const list = document.getElementById('ns-insp-notes-list');
-        if (list.innerText.includes('No user notes') || list.innerText.includes('Loading') || list.innerText.includes('Waiting')) list.innerHTML = itemHtml;
+        if (list.innerText.includes('No user notes') || list.innerText.includes('Loading') || list.innerText.includes('Waiting') || list.innerText.includes('Click attendee')) list.innerHTML = itemHtml;
         else list.insertAdjacentHTML('afterbegin', itemHtml);
 
         cache.clients.delete(activeClientInternalId);
@@ -1402,12 +1502,15 @@
       }
 
       const clientCell = e.target.closest('[data-clientid], [data-customerid], td.clientRecord');
-      const attendeeNameEl = e.target.closest('.attendeeName, .attendeeNameWrap');
+      const attendeeNameEl = e.target.closest('.attendeeName, .attendeeNameWrap, [class*="attendee"]');
       const contactLinkEl = e.target.closest('a[href*="contact.nl?id="], a[href*="/entity/contact.nl?id="]');
       const eventRecordCell = e.target.closest('.eventRecord');
+      const tdCell = e.target.closest('td, th');
 
-      if (clientCell || attendeeNameEl || contactLinkEl || eventRecordCell) {
-        selectEventAttendee(attendeeNameEl || contactLinkEl || clientCell || eventRecordCell);
+      const isInEventSection = eventRecordCell || (tdCell && findBoardEvent(tdCell));
+
+      if (clientCell || attendeeNameEl || contactLinkEl || isInEventSection) {
+        selectEventAttendee(e.target);
       }
     }
 

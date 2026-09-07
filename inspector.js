@@ -389,7 +389,7 @@
         if (iso) return { rawDate: ddmonM[0], iso };
       }
 
-      const monNameM = line.match(/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*,?\s*(\d{2,4}))?\b/i);
+      const monNameM = line.match(/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*,?\s*\d{2,4})?\b/i);
       if (monNameM) {
         const iso = normalizeDate(monNameM[0]);
         if (iso) return { rawDate: monNameM[0], iso };
@@ -574,7 +574,6 @@
             const cells = Array.from(row.querySelectorAll('td'));
             if (!cells.length) return;
 
-            // 1. Edit Target Link (Rectype 56 or Custom Record)
             let editUrl = '';
             const editA = row.querySelector('a[href*="custrecordentry.nl"], a[href*="rectype="], a[href*="&e=T"]');
             if (editA) {
@@ -587,7 +586,6 @@
               editUrl = h;
             }
 
-            // 2. Status Column with Text Fallback
             let status = '';
             if (statusCol !== -1 && cells[statusCol]) {
               status = (cells[statusCol].innerText || cells[statusCol].textContent || '').trim();
@@ -602,7 +600,6 @@
               }
             }
 
-            // 3. Course / Event Title
             let title = '';
             if (titleCol !== -1 && cells[titleCol]) {
               title = (cells[titleCol].innerText || cells[titleCol].textContent || '').trim();
@@ -618,7 +615,6 @@
               }
             }
 
-            // 4. Week Attending / Date Resolution
             let rawDate = '';
             if (dateCol !== -1 && cells[dateCol]) {
               rawDate = (cells[dateCol].innerText || cells[dateCol].textContent || '').trim();
@@ -631,7 +627,6 @@
               }
             }
 
-            // 5. Daily Attendance Verification (Thu, Fri, etc. marked "Yes")
             const attendedDays = [];
             dayCols.forEach(dc => {
               if (cells[dc.index]) {
@@ -642,7 +637,6 @@
               }
             });
 
-            // Calculate precise attending dates from Week Attending base
             let finalDateStr = rawDate;
             let finalIso = normalizeDate(rawDate);
 
@@ -942,7 +936,7 @@
       return `<span class="pill" style="background:${bg}; color:${color}; border:1px solid ${border}; font-size:10px; font-weight:700;">${status}</span>`;
     }
 
-    /* Standalone 60-Day Office Outlook Window Scanner with Grouped Copy Feature */
+    /* Standalone 60-Day Office Outlook Window Scanner */
     btnScan60d.onclick = async () => {
       if (!activeClientInternalId) {
         alert('Please click on an attendee or client on the board first.');
@@ -1010,6 +1004,22 @@
               font-size: 10px; font-weight: 700; text-transform: uppercase;
               letter-spacing: 0.5px; white-space: nowrap;
             }
+            .contact-link {
+              font-weight: 700; color: white; text-decoration: none; cursor: pointer;
+              transition: color 0.15s ease;
+            }
+            .contact-link:hover {
+              color: #38bdf8; text-decoration: underline;
+            }
+            .status-edit-btn {
+              display: inline-block; cursor: pointer;
+            }
+            .status-edit-btn .pill {
+              cursor: pointer !important; transition: transform 0.15s ease, filter 0.15s ease;
+            }
+            .status-edit-btn:hover .pill {
+              transform: scale(1.05); filter: brightness(1.2);
+            }
             .table-wrap { flex: 1; overflow-y: auto; padding: 12px; }
             .table-60d { width: 100%; border-collapse: collapse; font-size: 12px; }
             .table-60d th {
@@ -1045,12 +1055,12 @@
             <table class="table-60d">
               <thead>
                 <tr>
-                  <th style="width:20%;">Attendee</th>
-                  <th style="width:28%;">Course / Seminar</th>
+                  <th style="width:24%;">Attendee</th>
+                  <th style="width:30%;">Course / Seminar</th>
                   <th style="width:16%;">Date</th>
                   <th style="width:12%;">Status</th>
                   <th style="width:10%;">Timeline</th>
-                  <th style="width:14%;">Actions</th>
+                  <th style="width:8%;">Actions</th>
                 </tr>
               </thead>
               <tbody id="out-tbody">
@@ -1098,7 +1108,6 @@
 
       if (outCopySchedBtn) {
         outCopySchedBtn.onclick = async () => {
-          // Strict filtering: Include ONLY Scheduled, explicitly exclude Schedule Change / Rescheduled
           const scheduledOnly = currentUpcomingEvents.filter(ev => {
             const s = (ev.status || '').trim().toLowerCase();
             const t = (ev.title || '').trim().toLowerCase();
@@ -1117,7 +1126,6 @@
             return;
           }
 
-          // Group strictly by Course / Seminar, list only Name and Date
           const courseGroups = new Map();
           scheduledOnly.forEach(ev => {
             const courseTitle = ev.title || 'Scheduled Seminar';
@@ -1306,28 +1314,50 @@
 
           const fullPdfUrl = toAbsoluteNsUrl(ev.pdfUrl);
           const fullContactUrl = toAbsoluteNsUrl('/app/common/entity/contact.nl?id=' + ev.contactId);
-          const fullEditUrl = ev.editUrl ? toAbsoluteNsUrl(ev.editUrl) : '';
+          const fullEditUrl = ev.editUrl 
+            ? toAbsoluteNsUrl(ev.editUrl) 
+            : toAbsoluteNsUrl('/app/common/entity/contact.nl?id=' + ev.contactId + '&e=T');
 
           return `
             <tr>
               <td>
-                <a href="${fullContactUrl}" target="_blank" style="font-weight:700; color:white; text-decoration:none;">${ev.contactName}</a>
+                <a href="${fullContactUrl}" target="_blank" class="contact-link" title="Open Contact File">${ev.contactName} ↗</a>
                 <div style="font-size:10px; color:rgb(161,161,170);">${ev.position}</div>
               </td>
               <td style="font-weight:600; color:#fbbf24;">${ev.title}</td>
               <td style="white-space:nowrap;">${ev.dateStr}</td>
-              <td style="white-space:nowrap;">${getStatusBadge(ev.status || 'Scheduled')}</td>
+              <td style="white-space:nowrap;">
+                <span class="status-edit-btn" data-action-edit="${fullEditUrl}" title="Click to open Edit page">
+                  ${getStatusBadge(ev.status || 'Scheduled')}
+                </span>
+              </td>
               <td style="white-space:nowrap;">${badge}</td>
               <td style="white-space:nowrap;">
-                <div style="display:flex; gap:5px; align-items:center;">
-                  ${fullEditUrl ? `<a href="${fullEditUrl}" target="_blank" class="pill" style="cursor:pointer; background:rgba(255,255,255,0.12); color:white; border:1px solid rgba(255,255,255,0.3); text-decoration:none;" title="Open Record in Edit Mode">Edit ↗</a>` : ''}
-                  <button class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border:1px solid rgba(192,132,252,0.4);" data-action-pdf="${fullPdfUrl}" data-action-name="${ev.contactName}">📄 PDF</button>
-                  <a href="${fullContactUrl}" target="_blank" class="pill" style="cursor:pointer; background:rgba(255,255,255,0.08); color:white; border:1px solid rgba(255,255,255,0.18); text-decoration:none;">Open ↗</a>
-                </div>
+                <button class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border:1px solid rgba(192,132,252,0.4);" data-action-pdf="${fullPdfUrl}" data-action-name="${ev.contactName}">📄 PDF</button>
               </td>
             </tr>
           `;
         }).join('');
+
+        tbody.querySelectorAll('.status-edit-btn').forEach(btn => {
+          btn.onclick = () => {
+            const editUrl = btn.getAttribute('data-action-edit');
+            if (!editUrl) return;
+
+            const curX = outlookWindow.screenX !== undefined ? outlookWindow.screenX : outlookWindow.screenLeft;
+            const curY = outlookWindow.screenY !== undefined ? outlookWindow.screenY : outlookWindow.screenTop;
+            const curW = outlookWindow.outerWidth || 920;
+
+            let targetLeft = curX + curW + 15;
+            if (targetLeft + 850 > window.screen.availWidth) {
+              targetLeft = Math.max(20, curX + 40);
+            }
+            let targetTop = Math.max(20, curY + 30);
+
+            const winFeatures = `popup=1,width=880,height=820,left=${targetLeft},top=${targetTop},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
+            window.open(editUrl, 'NSEditRecordWindow_' + Date.now(), winFeatures);
+          };
+        });
 
         tbody.querySelectorAll('[data-action-pdf]').forEach(btn => {
           btn.onclick = () => {

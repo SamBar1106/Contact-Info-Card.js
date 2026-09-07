@@ -53,6 +53,7 @@
     };
 
     let activeClientInternalId = null;
+    let activeClientName = '';
     let activeContactId = null;
     let activeContactName = '';
     let activePdfUrl = '';
@@ -225,6 +226,67 @@
       } catch (e) {}
     });
 
+    /* PDF.js Dynamic Loader */
+    function ensurePdfJsLoaded() {
+      return new Promise((resolve, reject) => {
+        if (window.pdfjsLib) return resolve(window.pdfjsLib);
+
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        script.onload = () => {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = 
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+          resolve(window.pdfjsLib);
+        };
+        script.onerror = () => reject(new Error('Failed to load PDF.js from CDN'));
+        document.head.appendChild(script);
+      });
+    }
+
+    /* PDF Text Layer Extractor (Coordinate-Based Line Reassembly) */
+    async function extractLinesFromPdf(pdfUrl) {
+      if (!pdfUrl) return [];
+      const pdfjs = await ensurePdfJsLoaded();
+      const res = await fetch(pdfUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const arrayBuffer = await res.arrayBuffer();
+      const pdfDoc = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+      const allLines = [];
+
+      for (let p = 1; p <= pdfDoc.numPages; p++) {
+        const page = await pdfDoc.getPage(p);
+        const textContent = await page.getTextContent();
+        
+        // Group items by Y position (line clustering)
+        const lineBuckets = new Map();
+        textContent.items.forEach(item => {
+          const text = (item.str || '').trim();
+          if (!text) return;
+          const y = Math.round(item.transform[5]);
+          let bucketY = null;
+          for (const key of lineBuckets.keys()) {
+            if (Math.abs(key - y) <= 3) { bucketY = key; break; }
+          }
+          if (bucketY === null) {
+            bucketY = y;
+            lineBuckets.set(bucketY, []);
+          }
+          lineBuckets.get(bucketY).push({ x: item.transform[4], str: item.str });
+        });
+
+        // Sort lines top-to-bottom and tokens left-to-right
+        const sortedY = Array.from(lineBuckets.keys()).sort((a, b) => b - a);
+        sortedY.forEach(yKey => {
+          const lineItems = lineBuckets.get(yKey).sort((a, b) => a.x - b.x);
+          const combined = lineItems.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim();
+          if (combined) allLines.push(combined);
+        });
+      }
+
+      return allLines;
+    }
+
     const style = document.createElement('style');
     style.textContent = `
       * { box-sizing: border-box; }
@@ -328,6 +390,17 @@
         font-size: 13px; color: rgb(244, 244, 245); white-space: pre-wrap; word-break: break-word;
         user-select: text !important; -webkit-user-select: text !important; cursor: text;
       }
+
+      /* 60-Day Outlook Modal Styles */
+      #ns-modal-60d {
+        display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(14, 14, 17, 0.98); z-index: 10000; flex-direction: column;
+        padding: 12px; box-sizing: border-box; backdrop-filter: blur(8px);
+      }
+      .table-60d { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
+      .table-60d th { background: rgba(255,255,255,0.06); padding: 8px 6px; text-align: left; color: rgb(161,161,170); font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.12); }
+      .table-60d td { padding: 8px 6px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: middle; color: rgb(244,244,245); }
+      .table-60d tr:hover { background: rgba(255,255,255,0.03); }
     `;
     document.head.appendChild(style);
 
@@ -379,6 +452,10 @@
             </div>
             <div class="field-label" style="margin-top:6px;">Client Comments</div>
             <div id="ns-insp-comments" class="scroll-box">-</div>
+            
+            <button id="ns-insp-btn-scan-60d" class="btn btn-solid" style="margin-top:10px; width:100%; background:linear-gradient(180deg,#38bdf8 0%,#0284c7 100%); color:white; border:none; padding:8px 12px;">
+              📅 Scan Office 60-Day Outlook (PDFs)
+            </button>
           </div>
 
           <div class="glass-card card-schedule">
@@ -422,10 +499,197 @@
           </div>
         </div>
       </div>
+
+      <!-- 60-Day Office Outlook Overlay -->
+      <div id="ns-modal-60d">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.12); padding-bottom:8px;">
+          <div>
+            <div style="font-weight:700; font-size:13px; color:#38bdf8;">📅 Office 60-Day Attendance Outlook</div>
+            <div id="ns-modal-60d-client" style="font-size:11px; color:rgb(161,161,170); margin-top:2px;">-</div>
+          </div>
+          <button id="ns-modal-60d-close" class="btn" style="padding:4px 8px; font-size:11px;">✕ Close</button>
+        </div>
+
+        <div id="ns-modal-60d-progress" style="padding:10px 0; font-size:11px; color:rgb(251,191,36); display:none;">
+          <span>Scanning office schedule PDFs: </span>
+          <span id="ns-modal-60d-progress-text">0/0</span>
+        </div>
+
+        <div style="flex:1; overflow-y:auto; margin-top:6px;">
+          <table class="table-60d">
+            <thead>
+              <tr>
+                <th>Attendee</th>
+                <th>Course / Seminar</th>
+                <th>Date</th>
+                <th>Timeline</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="ns-modal-60d-tbody">
+              <tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:20px;">Click Scan to read office schedules...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     `;
     document.body.appendChild(appContainer);
 
     const seminarPill = document.getElementById('ns-seminar-pip-pill');
+    const modal60d = document.getElementById('ns-modal-60d');
+    const modalCloseBtn = document.getElementById('ns-modal-60d-close');
+    const btnScan60d = document.getElementById('ns-insp-btn-scan-60d');
+
+    modalCloseBtn.onclick = () => { modal60d.style.display = 'none'; };
+
+    /* 60-Day Office Outlook Batch Scanner */
+    btnScan60d.onclick = async () => {
+      if (!activeClientInternalId) {
+        alert('Please click on an attendee or client on the board first.');
+        return;
+      }
+
+      modal60d.style.display = 'flex';
+      document.getElementById('ns-modal-60d-client').textContent = 'Client: ' + (activeClientName || 'Selected Client');
+      const progressBox = document.getElementById('ns-modal-60d-progress');
+      const progressText = document.getElementById('ns-modal-60d-progress-text');
+      const tbody = document.getElementById('ns-modal-60d-tbody');
+
+      progressBox.style.display = 'block';
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:20px;">Discovering office contacts...</td></tr>';
+
+      try {
+        const clientData = await getClientData(activeClientInternalId);
+        let clientDoc = clientData.doc;
+        if (!clientDoc) {
+          const r = await fetch('/app/common/entity/custjob.nl?id=' + activeClientInternalId);
+          clientDoc = new DOMParser().parseFromString(await r.text(), 'text/html');
+        }
+
+        // Discover all contacts under this client
+        const contactMap = new Map();
+        clientDoc.querySelectorAll('a[href*="contact.nl?id="], a[href*="/entity/contact.nl?id="]').forEach(a => {
+          const id = a.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1];
+          const name = (a.innerText || a.textContent || '').trim();
+          if (id && name && !contactMap.has(id)) {
+            const row = a.closest('tr');
+            const pos = row ? (row.querySelector('td:nth-child(4), td.position')?.innerText || '').trim() : '';
+            contactMap.set(id, { id, name, position: pos });
+          }
+        });
+
+        const contacts = Array.from(contactMap.values());
+        if (!contacts.length) {
+          progressBox.style.display = 'none';
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(248,113,113); padding:20px;">No registered contacts found under this client.</td></tr>';
+          return;
+        }
+
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        const sixtyDaysOut = new Date(now.getTime() + (60 * 24 * 60 * 60 * 1000));
+
+        const upcomingEvents = [];
+        let processedCount = 0;
+        progressText.textContent = `0 / ${contacts.length}`;
+
+        // Process in throttled concurrent chunks of 2
+        const chunkSize = 2;
+        for (let i = 0; i < contacts.length; i += chunkSize) {
+          const chunk = contacts.slice(i, i + chunkSize);
+          await Promise.all(chunk.map(async (contact) => {
+            const pdfUrl = `/app/site/hosting/scriptlet.nl?script=customscript_scs_contact_sched_20_pdf_sl&deploy=customdeploy_scs_contact_sched_20_pdf_sl&contactId=${contact.id}`;
+            try {
+              const lines = await extractLinesFromPdf(pdfUrl);
+              lines.forEach(line => {
+                // Look for dates inside line
+                const dMatch = line.match(/\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}-[A-Za-z]{3}-\d{2,4}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/i);
+                if (dMatch) {
+                  const iso = normalizeDate(dMatch[0]);
+                  if (iso) {
+                    const p = iso.split('-').map(Number);
+                    const dt = new Date(p[0], p[1] - 1, p[2]);
+                    if (!isNaN(dt.getTime()) && dt >= now && dt <= sixtyDaysOut) {
+                      const diffDays = Math.ceil((dt - now) / (1000 * 60 * 60 * 24));
+                      const cleanTitle = line.replace(dMatch[0], '')
+                                             .replace(/\b(edit|view|scheduled|confirmed|completed|rescheduled)\b/gi, '')
+                                             .trim() || 'Scheduled Course';
+
+                      const k = `${contact.id}_${cleanTitle}_${iso}`;
+                      if (!upcomingEvents.some(x => x.key === k)) {
+                        upcomingEvents.push({
+                          key: k,
+                          contactName: contact.name,
+                          contactId: contact.id,
+                          position: contact.position || 'Contact',
+                          title: cleanTitle,
+                          dateStr: dMatch[0],
+                          iso,
+                          timestamp: dt.getTime(),
+                          diffDays,
+                          pdfUrl
+                        });
+                      }
+                    }
+                  }
+                }
+              });
+            } catch (err) {}
+            processedCount++;
+            progressText.textContent = `${processedCount} / ${contacts.length}`;
+          }));
+        }
+
+        progressBox.style.display = 'none';
+
+        if (!upcomingEvents.length) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgb(161,161,170); padding:20px;">No upcoming sessions scheduled in the next 60 days for this office.</td></tr>';
+          return;
+        }
+
+        // Sort events chronologically
+        upcomingEvents.sort((a, b) => a.timestamp - b.timestamp);
+
+        tbody.innerHTML = upcomingEvents.map(ev => {
+          let badge = `<span class="pill" style="background:rgba(56,189,248,0.2); color:#38bdf8; border-color:rgba(56,189,248,0.4);">In ${ev.diffDays} day(s)</span>`;
+          if (ev.diffDays === 0) badge = `<span class="pill" style="background:rgba(34,197,94,0.25); color:#4ade80; border-color:rgba(34,197,94,0.6);">Today</span>`;
+          else if (ev.diffDays === 1) badge = `<span class="pill" style="background:rgba(251,191,36,0.2); color:#fbbf24; border-color:rgba(251,191,36,0.4);">Tomorrow</span>`;
+
+          const fullPdfUrl = toAbsoluteNsUrl(ev.pdfUrl);
+          const fullContactUrl = toAbsoluteNsUrl('/app/common/entity/contact.nl?id=' + ev.contactId);
+
+          return `
+            <tr>
+              <td>
+                <a href="${fullContactUrl}" target="_blank" style="font-weight:700; color:white; text-decoration:none;">${ev.contactName}</a>
+                <div style="font-size:10px; color:rgb(161,161,170);">${ev.position}</div>
+              </td>
+              <td style="font-weight:600; color:#fbbf24;">${ev.title}</td>
+              <td style="white-space:nowrap;">${ev.dateStr}</td>
+              <td style="white-space:nowrap;">${badge}</td>
+              <td style="white-space:nowrap;">
+                <div style="display:flex; gap:4px;">
+                  <button class="pill" style="cursor:pointer; background:rgba(192,132,252,0.2); color:rgb(192,132,252); border-color:rgba(192,132,252,0.4);" data-action-pdf="${fullPdfUrl}" data-action-name="${ev.contactName}">📄 PDF</button>
+                  <a href="${fullContactUrl}" target="_blank" class="pill" style="cursor:pointer; background:rgba(255,255,255,0.08); color:white; text-decoration:none;">Open ↗</a>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+        tbody.querySelectorAll('[data-action-pdf]').forEach(btn => {
+          btn.onclick = () => {
+            activePdfUrl = btn.getAttribute('data-action-pdf');
+            activeContactName = btn.getAttribute('data-action-name');
+            openPdfPiP();
+          };
+        });
+
+      } catch (err) {
+        progressBox.style.display = 'none';
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:rgb(248,113,113); padding:20px;">Scan failed: ${err.message}</td></tr>`;
+      }
+    };
 
     function setPdfPiPLoading(name) {
       if (!pdfPipWin || pdfPipWin.closed) return;
@@ -745,7 +1009,6 @@
         };
       });
 
-      /* Reliable Multi-Target Opener for PiP Links */
       listContainer.querySelectorAll('.ns-pip-action-link, a[data-nav-url]').forEach(a => {
         a.onclick = (e) => {
           const targetUrl = a.getAttribute('data-nav-url') || a.getAttribute('href');
@@ -1111,7 +1374,6 @@
       const mainDoc = new DOMParser().parseFromString(html, 'text/html');
       const allDocs = [mainDoc];
 
-      // If lazy loading prevented sublist rendering, query direct machine endpoint
       const hasEventTable = Boolean(mainDoc.querySelector('table[id*="mge_event_client"], tr[id*="mge_event_client"]'));
       if (!hasEventTable) {
         try {
@@ -1289,6 +1551,7 @@
           if (m) clientInternalId = m[1];
         }
 
+        activeClientName = clientDisplayText;
         const clientEntityId = clientDisplayText.match(/^(\d+)/)?.[1] || 'N/A';
         const positionText = getNetSuiteViewField(doc, 'custrecord_crs_att_position', ['Position', 'Position/Post']) || '-';
 
@@ -1473,6 +1736,7 @@
     function selectAttendee(attendee) {
       activeAttendeeId = attendee.id;
       activeClientInternalId = null;
+      activeClientName = '';
       activeContactId = null;
       activeContactName = '';
       activePdfUrl = '';
@@ -1686,6 +1950,7 @@
 
       let { clientInternalId, detectedContactId, clientDisplayText } = await resolveEventClientAndContact(eventTarget, clickedCell, tr);
       activeClientInternalId = clientInternalId;
+      activeClientName = clientDisplayText || clientParsedName || rawText;
       document.getElementById('ns-insp-pill-id').textContent = clientInternalId ? ('Client ID: ' + clientInternalId) : 'Event Mode';
 
       function applyContactToUi(cId, cData) {
@@ -1791,7 +2056,6 @@
               })
             : allAttendance;
 
-          // Fallback only if the client record has zero attendance entries
           if (displayAttendance.length === 0 && attendeeParsedName) {
             displayAttendance.push({
               contactName: attendeeParsedName,
@@ -1811,7 +2075,7 @@
           };
           renderSeminarInPiP(displayAttendance, eventDisplayHeader, clientParsedName || rawText, dateBlock);
 
-          // Populate Inspector's contact card with the specific person clicked, or first attendee
+          // Populate Inspector contact card with clicked attendee, or first available attendee
           let targetContact = null;
           if (attendeeParsedName && displayAttendance.length > 0) {
             targetContact = displayAttendance.find(i => 

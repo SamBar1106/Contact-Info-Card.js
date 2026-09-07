@@ -233,7 +233,8 @@
         overflow: hidden; background: rgb(18, 18, 20);
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
         font-size: 13px; color: rgb(244, 244, 245);
-        user-select: text !important; -webkit-user-select: text !important;
+        user-select: text !important;
+        -webkit-user-select: text !important;
       }
       ::-webkit-scrollbar { width: 5px; height: 5px; }
       ::-webkit-scrollbar-track { background: transparent; }
@@ -652,7 +653,7 @@
       const s = status.trim().toLowerCase();
       let bg = 'rgba(255, 255, 255, 0.08)', color = 'rgb(228, 228, 231)', border = 'rgba(255, 255, 255, 0.18)';
 
-      if (s.includes('resched') || s.includes('re-sched')) {
+      if (s.includes('resched') || s.includes('re-sched') || s.includes('schedule change') || s.includes('sched change')) {
         bg = 'rgba(249, 115, 22, 0.25)'; color = 'rgb(251, 146, 60)'; border = 'rgba(249, 115, 22, 0.5)';
       } else if (s.includes('noshow') || s.includes('no show') || s.includes('no-show') || s === 'ns' || s.includes('did not attend') || s.includes('absent')) {
         bg = 'rgba(239, 68, 68, 0.25)'; color = 'rgb(248, 113, 113)'; border = 'rgba(239, 68, 68, 0.6)';
@@ -698,7 +699,7 @@
         let cardBorder = '';
         if (s.includes('noshow') || s.includes('no show') || s.includes('no-show') || s === 'ns' || s.includes('did not attend') || s.includes('absent')) {
           cardBorder = 'border-left: 3px solid rgb(248, 113, 113) !important;';
-        } else if (s.includes('resched') || s.includes('re-sched')) {
+        } else if (s.includes('resched') || s.includes('re-sched') || s.includes('schedule change') || s.includes('sched change')) {
           cardBorder = 'border-left: 3px solid rgb(251, 146, 60) !important;';
         } else if (s.includes('cancel') || s.includes('cxl')) {
           cardBorder = 'border-left: 3px solid rgb(239, 68, 68) !important;';
@@ -1101,7 +1102,7 @@
       return false;
     }
 
-    /* Resilient Event Attendance Parsing */
+    /* Resilient Multi-Attendee Attendance Parsing */
     async function getAllAttendance(clientId) {
       if (cache.eventAttendance.has(clientId)) return cache.eventAttendance.get(clientId);
 
@@ -1109,6 +1110,21 @@
       const html = await res.text();
       const mainDoc = new DOMParser().parseFromString(html, 'text/html');
       const allDocs = [mainDoc];
+
+      // If lazy loading prevented sublist rendering, query direct machine endpoint
+      const hasEventTable = Boolean(mainDoc.querySelector('table[id*="mge_event_client"], tr[id*="mge_event_client"]'));
+      if (!hasEventTable) {
+        try {
+          const directUrl = `/app/common/entity/custjob.nl?id=${clientId}&q=recmachcustrecord_mge_event_clientrange&si=0&f=T&machine=recmachcustrecord_mge_event_client`;
+          const directRes = await fetch(directUrl);
+          if (directRes.ok) {
+            const directHtml = await directRes.text();
+            if (directHtml.length > 100) {
+              allDocs.push(new DOMParser().parseFromString(directHtml, 'text/html'));
+            }
+          }
+        } catch (e) {}
+      }
 
       let pageIndices = [];
       const rangeEl = mainDoc.querySelector('[data-options*="recmachcustrecord_mge_event_clientrange"]');
@@ -1193,9 +1209,9 @@
 
             if (!attendanceDate && isPureDate) {
               attendanceDate = text;
-            } else if (!attendanceStatus && /\b(scheduled|rescheduled|re-scheduled|resched|attended|confirmed|cancell?ed|no[-\s]?show|noshow|ns|registered|enrolled|waitlist(ed)?|wait[-\s]?list|completed|invited|declined|tentative|pending|standby|present|did not attend|absent)\b/i.test(text)) {
+            } else if (!attendanceStatus && /\b(scheduled|rescheduled|re-scheduled|resched|schedule\s*change|attended|confirmed|cancell?ed|no[-\s]?show|noshow|ns|registered|enrolled|waitlist(ed)?|wait[-\s]?list|completed|invited|declined|tentative|pending|standby|present|did not attend|absent)\b/i.test(text)) {
               attendanceStatus = text;
-            } else if (!seminarTitle && text.length > 5) {
+            } else if (!seminarTitle && text.length > 4) {
               const isStatusWord = /\b(scheduled|rescheduled|confirmed|cancell?ed|no[-\s]?show|attended|completed|waitlist|registered)\b/i.test(text);
               if (!isStatusWord && !/^\d+$/.test(text) && !/^(yes|no|none)$/i.test(text)) {
                 seminarTitle = text;
@@ -1760,6 +1776,7 @@
         getAllAttendance(capturedId).then(allAttendance => {
           if (activeClientInternalId !== capturedId) return;
 
+          // Preserve ALL client attendees for this seminar
           const displayAttendance = (boardEvent && allAttendance.length > 0)
             ? allAttendance.filter(item => {
                 const itemDate = normalizeDate(item.date);
@@ -1770,17 +1787,11 @@
                   (boardEvent.coreName.includes(sig.coreName) || sig.coreName.includes(boardEvent.coreName)));
                 const isDateMatch = Boolean(itemDate && validDates.includes(itemDate));
 
-                if (attendeeParsedName && attendeeParsedName !== clientParsedName) {
-                  const isContactMatch = item.contactName.toLowerCase().includes(attendeeParsedName.toLowerCase()) ||
-                                         attendeeParsedName.toLowerCase().includes(item.contactName.toLowerCase());
-                  return (isTitleMatch || isDateMatch) && isContactMatch;
-                }
-
                 return isTitleMatch || isDateMatch;
               })
             : allAttendance;
 
-          // Seamless single-attendee synthetic fallback: Never show 0 attendees when clicking an attendee on the board
+          // Fallback only if the client record has zero attendance entries
           if (displayAttendance.length === 0 && attendeeParsedName) {
             displayAttendance.push({
               contactName: attendeeParsedName,
@@ -1800,11 +1811,22 @@
           };
           renderSeminarInPiP(displayAttendance, eventDisplayHeader, clientParsedName || rawText, dateBlock);
 
-          if (!activeContactId && displayAttendance.length > 0) {
-            const matched = displayAttendance.find(i => attendeeParsedName && i.contactName.toLowerCase().includes(attendeeParsedName.toLowerCase())) || displayAttendance[0];
-            if (matched && matched.contactId) {
-              getContactData(matched.contactId).then(cData => applyContactToUi(matched.contactId, cData));
-            }
+          // Populate Inspector's contact card with the specific person clicked, or first attendee
+          let targetContact = null;
+          if (attendeeParsedName && displayAttendance.length > 0) {
+            targetContact = displayAttendance.find(i => 
+              i.contactName.toLowerCase().includes(attendeeParsedName.toLowerCase()) ||
+              attendeeParsedName.toLowerCase().includes(i.contactName.toLowerCase())
+            );
+          }
+          if (!targetContact && displayAttendance.length > 0) {
+            targetContact = displayAttendance[0];
+          }
+
+          if (targetContact && targetContact.contactId) {
+            getContactData(targetContact.contactId).then(cData => applyContactToUi(targetContact.contactId, cData));
+          } else if (targetContact) {
+            document.getElementById('ns-insp-contact-name').textContent = targetContact.contactName;
           }
         });
       } else {

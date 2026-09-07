@@ -88,6 +88,24 @@
       return origin ? (origin + path) : path;
     }
 
+    function areDatesSameWeek(iso1, iso2) {
+      if (!iso1 || !iso2) return false;
+      const p1 = iso1.split('-').map(Number);
+      const p2 = iso2.split('-').map(Number);
+      const d1 = new Date(p1[0], p1[1] - 1, p1[2]);
+      const d2 = new Date(p2[0], p2[1] - 1, p2[2]);
+      if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return false;
+      const diffDays = Math.abs((d1 - d2) / (1000 * 60 * 60 * 24));
+      if (diffDays > 6) return false;
+      const day1 = d1.getDay() === 0 ? 7 : d1.getDay();
+      const day2 = d2.getDay() === 0 ? 7 : d2.getDay();
+      const mon1 = new Date(d1); mon1.setDate(d1.getDate() - (day1 - 1));
+      const mon2 = new Date(d2); mon2.setDate(d2.getDate() - (day2 - 1));
+      return mon1.getFullYear() === mon2.getFullYear() &&
+             mon1.getMonth() === mon2.getMonth() &&
+             mon1.getDate() === mon2.getDate();
+    }
+
     /* Geometry Memory: Track and save window position and size */
     let lastSavedGeom = '';
     function saveWindowGeometry() {
@@ -545,7 +563,7 @@
 
         function parseMachine(machineKey, defaultType) {
           const rows = Array.from(doc.querySelectorAll(
-            `tr[id^="${machineKey}row"], tr[id^="${machineKey}_row"], table[id*="${machineKey}"] tr.uir-list-row-tr, [id*="${machineKey}"] tr.uir-list-row-tr`
+            `tr[id^="${machineKey}row"], tr[id^="${machineKey}_row"], table[id*="${machineKey}"] tr.uir-list-row-tr, [id*="${machineKey}"] tr.uir-list-row-tr, [id*="${machineKey}"] tr[class*="uir-list-row"]`
           ));
           if (!rows.length) return;
 
@@ -575,15 +593,30 @@
             if (!cells.length) return;
 
             let editUrl = '';
-            const editA = row.querySelector('a[href*="custrecordentry.nl"], a[href*="rectype="], a[href*="&e=T"]');
-            if (editA) {
-              let h = editA.getAttribute('href') || '';
-              if (h && !h.startsWith('/app/')) {
-                if (h.startsWith('../')) h = '/app/' + h.replace(/^\.\.\//, '');
-                else if (h.startsWith('custom/')) h = '/app/common/' + h;
-                else if (!h.startsWith('/')) h = '/app/common/custom/' + h;
+            const allLinks = Array.from(row.querySelectorAll('a'));
+            for (const a of allLinks) {
+              const txt = (a.innerText || a.textContent || '').trim().toLowerCase();
+              const h = a.getAttribute('href') || '';
+              const oc = a.getAttribute('onclick') || '';
+              const combined = h + ' ' + oc;
+
+              if (txt === 'edit' || combined.includes('custrecordentry.nl') || combined.includes('rectype=') || combined.includes('&e=T')) {
+                const mCust = combined.match(/(?:https?:\/\/[^\s'"]+)?(?:\/app\/common\/custom\/|\.\.\/custom\/|custom\/)?(custrecordentry\.nl\?[^'"\s\)]+)/i);
+                if (mCust) {
+                  let q = mCust[1].replace(/&amp;/g, '&');
+                  if (!q.startsWith('/app/common/custom/')) q = '/app/common/custom/' + q;
+                  if (!q.includes('&e=T')) q += '&e=T';
+                  editUrl = q;
+                  break;
+                }
+                const mApp = combined.match(/\/app\/[^\s'"\)]+/);
+                if (mApp) {
+                  let q = mApp[0].replace(/&amp;/g, '&');
+                  if (!q.includes('&e=T')) q += '&e=T';
+                  editUrl = q;
+                  break;
+                }
               }
-              editUrl = h;
             }
 
             let status = '';
@@ -679,7 +712,7 @@
                 rawDate: finalDateStr || rawDate,
                 iso: finalIso,
                 status: status || 'Scheduled',
-                editUrl,
+                editUrl: editUrl || '',
                 attendedDays
               });
             }
@@ -1011,14 +1044,14 @@
             .contact-link:hover {
               color: #38bdf8; text-decoration: underline;
             }
-            .status-edit-btn {
-              display: inline-block; cursor: pointer;
+            .status-edit-link {
+              display: inline-block; cursor: pointer; text-decoration: none !important;
             }
-            .status-edit-btn .pill {
+            .status-edit-link .pill {
               cursor: pointer !important; transition: transform 0.15s ease, filter 0.15s ease;
             }
-            .status-edit-btn:hover .pill {
-              transform: scale(1.05); filter: brightness(1.2);
+            .status-edit-link:hover .pill {
+              transform: scale(1.05); filter: brightness(1.25);
             }
             .table-wrap { flex: 1; overflow-y: auto; padding: 12px; }
             .table-60d { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -1055,11 +1088,11 @@
             <table class="table-60d">
               <thead>
                 <tr>
-                  <th style="width:24%;">Attendee</th>
+                  <th style="width:25%;">Attendee</th>
                   <th style="width:30%;">Course / Seminar</th>
                   <th style="width:16%;">Date</th>
                   <th style="width:12%;">Status</th>
-                  <th style="width:10%;">Timeline</th>
+                  <th style="width:9%;">Timeline</th>
                   <th style="width:8%;">Actions</th>
                 </tr>
               </thead>
@@ -1159,7 +1192,10 @@
       }
 
       try {
-        const contacts = await getAllClientContacts(scanClientId);
+        const [contacts, clientAttendance] = await Promise.all([
+          getAllClientContacts(scanClientId),
+          getAllAttendance(scanClientId).catch(() => [])
+        ]);
 
         if (scanContactId && !contacts.some(c => c.id === scanContactId)) {
           contacts.push({ id: scanContactId, name: scanContactName || 'Selected Attendee', position: '' });
@@ -1194,7 +1230,7 @@
               extractLinesFromPdf(pdfUrl).catch(() => [])
             ]);
 
-            // 1. Process direct records from Contact Attendance/Scheduling subtab (custom26)
+            // 1. Direct records from Contact Attendance/Scheduling tab (custom26)
             schedRecords.forEach(rec => {
               if (rec.iso) {
                 const p = rec.iso.split('-').map(Number);
@@ -1224,7 +1260,7 @@
               }
             });
 
-            // 2. Correlate with PDF text extract layer and enrich missing entries
+            // 2. Correlate with PDF text layer + client-wide attendance cache
             for (let lineIdx = 0; lineIdx < pdfLines.length; lineIdx++) {
               const line = pdfLines[lineIdx];
               const dateInfo = extractDateFromLine(line);
@@ -1256,18 +1292,27 @@
 
                   const matchedSchedule = schedRecords.find(sr => 
                     (sr.iso && sr.iso === dateInfo.iso) || 
+                    areDatesSameWeek(sr.iso, dateInfo.iso) ||
                     (sr.title && cleanTitle && (sr.title.toLowerCase().includes(cleanTitle.toLowerCase()) || cleanTitle.toLowerCase().includes(sr.title.toLowerCase())))
                   );
 
+                  const matchedClientAtt = clientAttendance.find(ca =>
+                    (ca.contactId === contact.id || (ca.contactName && ca.contactName.toLowerCase().includes(contact.name.toLowerCase()))) &&
+                    ((ca.date && dateInfo.rawDate && ca.date.includes(dateInfo.rawDate)) || areDatesSameWeek(normalizeDate(ca.date), dateInfo.iso))
+                  );
+
+                  const resolvedEdit = matchedSchedule?.editUrl || matchedClientAtt?.editUrl || '';
+                  const resolvedStatus = matchedSchedule?.status || matchedClientAtt?.status || 'Scheduled';
+
                   const k = `${contact.id}_${cleanTitle}_${dateInfo.iso}`;
-                  const existingIdx = upcomingEvents.findIndex(x => x.key === k || (x.contactId === contact.id && x.iso === dateInfo.iso));
+                  const existingIdx = upcomingEvents.findIndex(x => x.key === k || (x.contactId === contact.id && (x.iso === dateInfo.iso || areDatesSameWeek(x.iso, dateInfo.iso))));
 
                   if (existingIdx !== -1) {
-                    if (matchedSchedule && matchedSchedule.status) {
-                      upcomingEvents[existingIdx].status = matchedSchedule.status;
+                    if (resolvedStatus && (!upcomingEvents[existingIdx].status || upcomingEvents[existingIdx].status === 'Scheduled')) {
+                      upcomingEvents[existingIdx].status = resolvedStatus;
                     }
-                    if (matchedSchedule && matchedSchedule.editUrl && !upcomingEvents[existingIdx].editUrl) {
-                      upcomingEvents[existingIdx].editUrl = matchedSchedule.editUrl;
+                    if (resolvedEdit && !upcomingEvents[existingIdx].editUrl) {
+                      upcomingEvents[existingIdx].editUrl = resolvedEdit;
                     }
                   } else {
                     upcomingEvents.push({
@@ -1278,8 +1323,8 @@
                       title: cleanTitle,
                       dateStr: dateInfo.rawDate,
                       iso: dateInfo.iso,
-                      status: matchedSchedule?.status || 'Scheduled',
-                      editUrl: matchedSchedule?.editUrl || '',
+                      status: resolvedStatus,
+                      editUrl: resolvedEdit,
                       timestamp: dt.getTime(),
                       diffDays,
                       pdfUrl
@@ -1314,9 +1359,12 @@
 
           const fullPdfUrl = toAbsoluteNsUrl(ev.pdfUrl);
           const fullContactUrl = toAbsoluteNsUrl('/app/common/entity/contact.nl?id=' + ev.contactId);
-          const fullEditUrl = ev.editUrl 
-            ? toAbsoluteNsUrl(ev.editUrl) 
-            : toAbsoluteNsUrl('/app/common/entity/contact.nl?id=' + ev.contactId + '&e=T');
+          
+          let rawEdit = ev.editUrl;
+          if (!rawEdit && ev.contactId) {
+            rawEdit = `/app/common/entity/contact.nl?id=${ev.contactId}&selectedtab=custom26&e=T`;
+          }
+          const fullEditUrl = toAbsoluteNsUrl(rawEdit);
 
           return `
             <tr>
@@ -1327,9 +1375,9 @@
               <td style="font-weight:600; color:#fbbf24;">${ev.title}</td>
               <td style="white-space:nowrap;">${ev.dateStr}</td>
               <td style="white-space:nowrap;">
-                <span class="status-edit-btn" data-action-edit="${fullEditUrl}" title="Click to open Edit page">
+                <a href="${fullEditUrl}" data-action-edit="${fullEditUrl}" target="_blank" class="status-edit-link" title="Click to edit status record">
                   ${getStatusBadge(ev.status || 'Scheduled')}
-                </span>
+                </a>
               </td>
               <td style="white-space:nowrap;">${badge}</td>
               <td style="white-space:nowrap;">
@@ -1339,23 +1387,44 @@
           `;
         }).join('');
 
-        tbody.querySelectorAll('.status-edit-btn').forEach(btn => {
-          btn.onclick = () => {
-            const editUrl = btn.getAttribute('data-action-edit');
-            if (!editUrl) return;
+        tbody.querySelectorAll('.status-edit-link').forEach(link => {
+          link.onclick = (e) => {
+            const editUrl = link.getAttribute('data-action-edit') || link.getAttribute('href');
+            if (!editUrl || editUrl === 'javascript:void(0)') return;
+
+            e.preventDefault();
+            e.stopPropagation();
 
             const curX = outlookWindow.screenX !== undefined ? outlookWindow.screenX : outlookWindow.screenLeft;
             const curY = outlookWindow.screenY !== undefined ? outlookWindow.screenY : outlookWindow.screenTop;
             const curW = outlookWindow.outerWidth || 920;
 
             let targetLeft = curX + curW + 15;
-            if (targetLeft + 850 > window.screen.availWidth) {
-              targetLeft = Math.max(20, curX + 40);
+            if (targetLeft + 850 > (window.screen.availWidth || 1920)) {
+              targetLeft = Math.max(10, curX - 865);
+              if (targetLeft <= 10) targetLeft = Math.max(20, curX + 30);
             }
-            let targetTop = Math.max(20, curY + 30);
+            let targetTop = Math.max(20, curY);
 
-            const winFeatures = `popup=1,width=880,height=820,left=${targetLeft},top=${targetTop},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
-            window.open(editUrl, 'NSEditRecordWindow_' + Date.now(), winFeatures);
+            const winFeatures = `popup=1,width=850,height=820,left=${targetLeft},top=${targetTop},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`;
+            
+            let editWin = null;
+            try {
+              editWin = outlookWindow.open(editUrl, 'NSEditRecordWindow_' + Date.now(), winFeatures);
+            } catch (err) {}
+
+            if (!editWin) {
+              try {
+                const rootWin = window.opener || window;
+                editWin = rootWin.open(editUrl, 'NSEditRecordWindow_' + Date.now(), winFeatures);
+              } catch (err) {}
+            }
+
+            if (editWin) {
+              editWin.focus();
+            } else {
+              window.open(editUrl, '_blank');
+            }
           };
         });
 
@@ -1628,7 +1697,7 @@
           cardBorder = 'border-left: 3px solid rgb(192, 132, 252) !important;';
         }
 
-        const rawEditTarget = item.editUrl || (item.contactId ? '/app/common/entity/contact.nl?id=' + item.contactId + '&e=T' : '');
+        const rawEditTarget = item.editUrl || (item.contactId ? '/app/common/entity/contact.nl?id=' + item.contactId + '&selectedtab=custom26&e=T' : '');
         const fullEditUrl = toAbsoluteNsUrl(rawEditTarget);
         const fullContactUrl = toAbsoluteNsUrl(item.contactId ? '/app/common/entity/contact.nl?id=' + item.contactId : '');
 
@@ -2079,7 +2148,7 @@
           }
 
           if (!rowEditUrl && contactId) {
-            rowEditUrl = '/app/common/entity/contact.nl?id=' + contactId + '&e=T';
+            rowEditUrl = '/app/common/entity/contact.nl?id=' + contactId + '&selectedtab=custom26&e=T';
           }
 
           let attendanceDate = '';
@@ -2297,7 +2366,7 @@
               if (eventBox && eventItems) {
                 eventBox.style.display = 'block';
                 eventItems.innerHTML = matches.map((m, idx) => {
-                  const rawEditTarget = m.editUrl || (m.contactId ? '/app/common/entity/contact.nl?id=' + m.contactId + '&e=T' : '');
+                  const rawEditTarget = m.editUrl || (m.contactId ? '/app/common/entity/contact.nl?id=' + m.contactId + '&selectedtab=custom26&e=T' : '');
                   const fullEditUrl = toAbsoluteNsUrl(rawEditTarget);
                   return `
                     <div style="${idx > 0 ? 'border-top:1px solid rgba(251,191,36,0.2); padding-top:5px;' : ''}">
@@ -2684,7 +2753,7 @@
               eventTitle: eventDisplayHeader,
               date: (boardEvent && boardEvent.dateStr) ? boardEvent.dateStr : 'This Week',
               status: fallbackStatus || 'Scheduled',
-              editUrl: detectedContactId ? `/app/common/entity/contact.nl?id=${detectedContactId}&e=T` : ''
+              editUrl: detectedContactId ? `/app/common/entity/contact.nl?id=${detectedContactId}&selectedtab=custom26&e=T` : ''
             });
           }
 
@@ -2729,7 +2798,7 @@
             eventTitle: eventDisplayHeader,
             date: (boardEvent && boardEvent.dateStr) ? boardEvent.dateStr : 'This Week',
             status: fallbackStatus || 'Scheduled',
-            editUrl: detectedContactId ? `/app/common/entity/contact.nl?id=${detectedContactId}&e=T` : ''
+            editUrl: detectedContactId ? `/app/common/entity/contact.nl?id=${detectedContactId}&selectedtab=custom26&e=T` : ''
           }];
           renderSeminarInPiP(singleFallback, eventDisplayHeader, clientParsedName || rawText, dateBlock);
         }

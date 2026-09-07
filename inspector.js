@@ -39,7 +39,7 @@
 
   const doc = popup.document;
   doc.open();
-  doc.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>NetSuite Inspector</title></head><body style="margin:0;padding:0;background:rgb(18,18,20);overflow:hidden;width:100vw;height:100vh;user-select:none;"></body></html>');
+  doc.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>NetSuite Inspector</title></head><body style="margin:0;padding:0;background:rgb(18,18,20);overflow:hidden;width:100vw;height:100vh;user-select:text;-webkit-user-select:text;"></body></html>');
   doc.close();
 
   function runInspectorApp() {
@@ -202,7 +202,9 @@
         margin: 0; padding: 0; width: 100%; height: 100%;
         overflow: hidden; background: rgb(18, 18, 20);
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-        font-size: 13px; color: rgb(244, 244, 245); user-select: none;
+        font-size: 13px; color: rgb(244, 244, 245);
+        user-select: text !important;
+        -webkit-user-select: text !important;
       }
       ::-webkit-scrollbar { width: 5px; height: 5px; }
       ::-webkit-scrollbar-track { background: transparent; }
@@ -212,8 +214,9 @@
         display: flex; background: rgba(24, 24, 27, 0.98);
         border-bottom: 1px solid rgba(255, 255, 255, 0.12);
         padding: 8px 12px; align-items: center; justify-content: space-between; flex-shrink: 0;
+        user-select: none; -webkit-user-select: none;
       }
-      .app-title { font-weight: 700; font-size: 13px; color: white; display: flex; align-items: center; gap: 8px; }
+      .app-title { font-weight: 700; font-size: 13px; color: white; display: flex; align-items: center; gap: 8px; user-select: none; -webkit-user-select: none; }
 
       .content-viewport { width: 100%; height: calc(100% - 46px); overflow: hidden; position: relative; }
       .view-pane { width: 100%; height: 100%; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -223,6 +226,7 @@
         font-size: 10px; font-weight: 700; text-transform: uppercase;
         background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18);
         color: rgb(228, 228, 231); letter-spacing: 0.5px; white-space: nowrap;
+        user-select: none; -webkit-user-select: none;
       }
 
       .btn {
@@ -230,12 +234,17 @@
         display: inline-flex; align-items: center; justify-content: center; text-decoration: none;
         transition: all 0.2s ease; border: 1px solid rgba(255, 255, 255, 0.18);
         background: rgba(255, 255, 255, 0.08); color: rgb(250, 250, 250);
+        user-select: none; -webkit-user-select: none;
       }
       .btn:hover { background: rgba(255, 255, 255, 0.14); }
       .btn-solid { background: linear-gradient(180deg, white 0%, rgb(228, 228, 231) 100%); color: rgb(9, 9, 11); border: 1px solid white; font-weight: 700; }
       .btn-solid:hover { background: rgb(212, 212, 216); }
 
-      .glass-card { background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 10px 12px; }
+      .glass-card {
+        background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px; padding: 10px 12px;
+        user-select: text !important; -webkit-user-select: text !important;
+      }
       .card-contact { border-left: 3px solid rgb(129, 140, 248); }
       .title-contact { color: rgb(129, 140, 248) !important; }
       .card-client { border-left: 3px solid rgb(56, 189, 248); }
@@ -245,14 +254,22 @@
       .card-notes { border-left: 3px solid rgb(52, 211, 153); }
       .title-notes { color: rgb(52, 211, 153) !important; }
 
-      .field-label { font-size: 10px; text-transform: uppercase; font-weight: 700; color: rgb(161, 161, 170); letter-spacing: 0.6px; margin-bottom: 2px; }
-      .field-value { font-size: 12px; color: rgb(250, 250, 250); font-weight: 500; word-break: break-word; }
+      .field-label {
+        font-size: 10px; text-transform: uppercase; font-weight: 700;
+        color: rgb(161, 161, 170); letter-spacing: 0.6px; margin-bottom: 2px;
+        user-select: text !important; -webkit-user-select: text !important;
+      }
+      .field-value {
+        font-size: 12px; color: rgb(250, 250, 250); font-weight: 500; word-break: break-word;
+        user-select: text !important; -webkit-user-select: text !important; cursor: text;
+      }
       .field-value a { color: rgb(250, 250, 250); text-decoration: none; cursor: pointer; }
       .field-value a:hover { color: rgb(56, 189, 248); }
 
       input[type="text"], textarea {
         width: 100%; background: rgba(9, 9, 11, 0.65); border: 1px solid rgba(255, 255, 255, 0.14);
         color: rgb(250, 250, 250); padding: 7px 11px; border-radius: 8px; font-size: 12px; outline: none;
+        user-select: text !important; -webkit-user-select: text !important;
       }
       .search-results {
         max-height: 130px; overflow-y: auto; background: rgba(18, 18, 20, 0.96);
@@ -261,12 +278,26 @@
       .search-item { padding: 7px 12px; cursor: pointer; border-bottom: 1px solid rgba(255, 255, 255, 0.06); font-size: 11px; color: rgb(228, 228, 231); }
       .search-item:hover { background: rgba(255, 255, 255, 0.12); color: white; }
 
-      .scroll-box { font-size: 11px; color: rgb(212, 212, 216); max-height: 52px; overflow-y: auto; background: rgba(9, 9, 11, 0.5); padding: 6px 8px; border-radius: 6px; white-space: pre-wrap; }
-      .notes-container { max-height: 155px; overflow-y: auto; background: rgba(9, 9, 11, 0.5); padding: 8px 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px; }
-      .note-item { border-left: 2px solid rgb(52, 211, 153); padding-left: 8px; }
+      .scroll-box {
+        font-size: 11px; color: rgb(212, 212, 216); max-height: 52px; overflow-y: auto;
+        background: rgba(9, 9, 11, 0.5); padding: 6px 8px; border-radius: 6px; white-space: pre-wrap;
+        user-select: text !important; -webkit-user-select: text !important; cursor: text;
+      }
+      .notes-container {
+        max-height: 155px; overflow-y: auto; background: rgba(9, 9, 11, 0.5);
+        padding: 8px 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;
+        user-select: text !important; -webkit-user-select: text !important;
+      }
+      .note-item {
+        border-left: 2px solid rgb(52, 211, 153); padding-left: 8px;
+        user-select: text !important; -webkit-user-select: text !important;
+      }
       .note-header { font-size: 11px; color: rgb(161, 161, 170); display: flex; justify-content: space-between; margin-bottom: 3px; }
-      .note-author { font-weight: 700; color: rgb(250, 250, 250); }
-      .note-body { font-size: 13px; color: rgb(244, 244, 245); white-space: pre-wrap; word-break: break-word; }
+      .note-author { font-weight: 700; color: rgb(250, 250, 250); user-select: text !important; -webkit-user-select: text !important; }
+      .note-body {
+        font-size: 13px; color: rgb(244, 244, 245); white-space: pre-wrap; word-break: break-word;
+        user-select: text !important; -webkit-user-select: text !important; cursor: text;
+      }
     `;
     document.head.appendChild(style);
 
@@ -417,12 +448,14 @@
               margin: 0; padding: 0; width: 100%; height: 100%;
               overflow: hidden; background: rgb(18, 18, 20);
               font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-              display: flex; flex-direction: column; user-select: none;
+              display: flex; flex-direction: column;
+              user-select: text; -webkit-user-select: text;
             }
             .pip-pdf-nav {
               display: flex; justify-content: space-between; align-items: center;
               padding: 8px 12px; background: rgba(24, 24, 27, 0.98);
               border-bottom: 1px solid rgba(255, 255, 255, 0.12); flex-shrink: 0;
+              user-select: none; -webkit-user-select: none;
             }
             .pip-pdf-title {
               display: flex; align-items: center; gap: 8px; font-weight: 700;
@@ -432,6 +465,7 @@
               padding: 4px 10px; border-radius: 6px; cursor: pointer; font-weight: 600;
               font-size: 11px; text-decoration: none; border: 1px solid rgba(255, 255, 255, 0.18);
               background: rgba(255, 255, 255, 0.08); color: rgb(250, 250, 250); transition: all 0.2s ease;
+              user-select: none; -webkit-user-select: none;
             }
             .btn:hover { background: rgba(255, 255, 255, 0.14); }
             iframe { width: 100%; height: 100%; border: none; background: white; }
@@ -489,7 +523,8 @@
             margin: 0; padding: 0; width: 100%; height: 100%;
             overflow: hidden; background: rgb(18, 18, 20);
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-            font-size: 13px; color: rgb(244, 244, 245); user-select: none;
+            font-size: 13px; color: rgb(244, 244, 245);
+            user-select: text !important; -webkit-user-select: text !important;
           }
           ::-webkit-scrollbar { width: 5px; height: 5px; }
           ::-webkit-scrollbar-track { background: transparent; }
@@ -499,6 +534,7 @@
             display: flex; justify-content: space-between; align-items: center;
             padding: 8px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.12);
             background: rgba(24, 24, 27, 0.98); flex-shrink: 0;
+            user-select: none; -webkit-user-select: none;
           }
           .pip-body {
             padding: 12px; height: calc(100% - 45px); overflow-y: auto;
@@ -508,6 +544,7 @@
             background: rgba(255, 255, 255, 0.035);
             border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 10px; padding: 10px 12px;
+            user-select: text !important; -webkit-user-select: text !important;
           }
           .card-contact { border-left: 3px solid rgb(129, 140, 248); }
           .pill {
@@ -515,9 +552,20 @@
             font-size: 10px; font-weight: 700; text-transform: uppercase;
             background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18);
             color: rgb(228, 228, 231); letter-spacing: 0.5px; white-space: nowrap;
+            user-select: none; -webkit-user-select: none;
           }
-          .field-label { font-size: 10px; text-transform: uppercase; font-weight: 700; color: rgb(161, 161, 170); letter-spacing: 0.6px; margin-bottom: 2px; }
-          .field-value { font-size: 12px; color: rgb(250, 250, 250); font-weight: 500; word-break: break-word; }
+          .field-label {
+            font-size: 10px; text-transform: uppercase; font-weight: 700;
+            color: rgb(161, 161, 170); letter-spacing: 0.6px; margin-bottom: 2px;
+            user-select: text !important; -webkit-user-select: text !important;
+          }
+          .field-value {
+            font-size: 12px; color: rgb(250, 250, 250); font-weight: 500; word-break: break-word;
+            user-select: text !important; -webkit-user-select: text !important; cursor: text;
+          }
+          .contact-card-info {
+            user-select: text !important; -webkit-user-select: text !important; cursor: text;
+          }
           a { color: rgb(250, 250, 250); text-decoration: none; cursor: pointer; }
           a:hover { color: rgb(56, 189, 248); }
         `;
@@ -1044,7 +1092,6 @@
 
       const results = [];
       allDocs.forEach(d => {
-        // Prioritize the actual event attendance sublist; avoid general directory contacts tables
         let candidateTables = Array.from(d.querySelectorAll('table[id*="mge_event_client"], table[data-machine="recmachcustrecord_mge_event_client"]'));
         if (!candidateTables.length) {
           candidateTables = Array.from(d.querySelectorAll('table')).filter(tbl => {
@@ -1128,7 +1175,6 @@
               }
             });
 
-            // Guard against phantom rows: Real seminar records MUST have an attendance date
             if (attendanceDate && (seminarTitle || attendanceStatus || rowEditUrl)) {
               const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}`;
               if (!results.some(r => r.compoundKey === compoundKey)) {
@@ -1298,7 +1344,6 @@
               return isEventInOpenWeeks(item, openBoardInfo);
             });
 
-            // Ensure unique seminar entries by title and date
             const matches = [];
             rawMatches.forEach(m => {
               const k = `${m.contactName}_${m.eventTitle}_${m.date}`;

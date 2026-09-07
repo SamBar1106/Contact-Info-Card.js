@@ -219,7 +219,6 @@
 
     const seminarPill = document.getElementById('ns-seminar-pip-pill');
 
-    /* Dynamic PDF Updater: Updates open PiP window on attendee change */
     function setPdfPiPLoading(name) {
       if (!pdfPipWin || pdfPipWin.closed) return;
       try {
@@ -248,7 +247,6 @@
       }
     }
 
-    /* Document Picture-in-Picture: PDF Viewer */
     async function openPdfPiP() {
       if (!activePdfUrl) return;
 
@@ -320,7 +318,6 @@
       window.open(activePdfUrl, 'NSSchedulePDFWindow_' + Date.now(), 'popup=1,width=750,height=880,menubar=no,toolbar=no,location=no,status=no,resizable=yes');
     }
 
-    /* Document Picture-in-Picture: Seminar Viewer */
     async function getSeminarPiPWindow() {
       if (seminarPipWin && !seminarPipWin.closed) {
         seminarPipWin.focus();
@@ -964,8 +961,6 @@
             }
 
             document.getElementById('ns-insp-contact-comments').textContent = cData.comments;
-
-            /* If the PDF PiP window is open, render this attendee's PDF immediately */
             updatePdfPiPIfOpen(activePdfUrl, activeContactName);
           });
         } else {
@@ -1004,7 +999,6 @@
             document.getElementById('ns-insp-client-fetch-status').style.color = 'rgb(52, 211, 153)';
           });
 
-          /* Match if attendee is scheduled during the weeks OPEN on the board */
           getAllAttendance(clientInternalId).then(allAttendance => {
             const openBoardInfo = getOpenBoardDateInfo();
 
@@ -1078,7 +1072,6 @@
       activePdfUrl = '';
       cachedMatchingSeminars = null;
 
-      /* Update PiP loading state immediately while leaving the window open */
       setPdfPiPLoading(attendee.attendeeName);
       closeSeminarPiP();
       seminarPill.style.display = 'none';
@@ -1124,16 +1117,43 @@
       fetchAttendeeRecord(attendee);
     }
 
+    /* Patched: selectEventAttendee with robust ID lookup & state reset */
     async function selectEventAttendee(eventTarget) {
       const clickedCell = eventTarget.closest('td, th, [data-clientid], [data-customerid]') || eventTarget;
+      const tr = clickedCell.closest('tr');
+
+      // Comprehensive client ID discovery across the cell, the row, and child links
       let clientInternalId = clickedCell.getAttribute('data-clientid') || clickedCell.getAttribute('data-customerid') || clickedCell.dataset?.clientid || clickedCell.dataset?.customerid;
+
+      if (!clientInternalId && tr) {
+        clientInternalId = tr.getAttribute('data-clientid') || tr.getAttribute('data-customerid') || tr.dataset?.clientid || tr.dataset?.customerid;
+      }
+
+      if (!clientInternalId && tr) {
+        const clientEl = tr.querySelector('[data-clientid], [data-customerid], a[href*="custjob.nl?id="], a[href*="customer.nl?id="], td.clientRecord');
+        if (clientEl) {
+          clientInternalId = clientEl.getAttribute('data-clientid') || clientEl.getAttribute('data-customerid') || clientEl.dataset?.clientid || clientEl.dataset?.customerid;
+          if (!clientInternalId) {
+            const m = (clientEl.getAttribute('href') || clientEl.outerHTML || '').match(/(?:custjob\.nl|customer\.nl)\?[^"']*id=(\d+)/i);
+            if (m) clientInternalId = m[1];
+          }
+        }
+      }
+
       if (!clientInternalId) {
-        const raw = clickedCell.outerHTML || '';
+        const raw = (tr || clickedCell).outerHTML || '';
         const idM = raw.match(/(?:custjob\.nl|customer\.nl)\?[^"']*id=(\d+)/i);
         if (idM) clientInternalId = idM[1];
       }
 
-      const tr = clickedCell.closest('tr');
+      // Check if clicked element relates to a contact
+      const contactLink = eventTarget.closest('a[href*="contact.nl?id="]') || clickedCell.querySelector('a[href*="contact.nl?id="]') || (tr ? tr.querySelector('a[href*="contact.nl?id="]') : null);
+      const detectedContactId = contactLink ? contactLink.getAttribute('href')?.match(/[?&]id=(\d+)/)?.[1] : null;
+
+      if (!clientInternalId && detectedContactId) {
+        clientInternalId = safeLookupSS1('contact', detectedContactId, 'company') || safeLookupSS1('contact', detectedContactId, 'parentcustomer');
+      }
+
       const nameEl = clickedCell.querySelector('.attendeeName') || clickedCell.closest('.attendeeName') || clickedCell;
       let cleanAttendeeName = '';
       if (nameEl) {
@@ -1151,10 +1171,13 @@
       const isSchd = !!(clickedCell.classList.contains('statusSchd'));
       const fallbackStatus = isConf ? 'Confirmed' : (isSchd ? 'Scheduled' : '');
 
+      // Reset application state
       activeAttendeeId = null;
-      activeContactId = null;
-      activeContactName = '';
+      activeClientInternalId = clientInternalId || null;
+      activeContactId = detectedContactId || null;
+      activeContactName = cleanAttendeeName || '';
       activePdfUrl = '';
+      cachedMatchingSeminars = null;
 
       setPdfPiPLoading(cleanAttendeeName);
 
@@ -1176,6 +1199,32 @@
       document.getElementById('ns-insp-sched-day').innerHTML = `${dateBlock}${fallbackStatus ? `<div style="margin-top:4px;">${getStatusBadge(fallbackStatus)}</div>` : ''}`;
       document.getElementById('ns-insp-pill-id').textContent = clientInternalId ? ('Client ID: ' + clientInternalId) : 'Event Mode';
 
+      // Reset Client Info DOM fields immediately
+      document.getElementById('ns-insp-full-client').textContent = clientInternalId ? 'Loading client...' : cleanAttendeeName;
+      document.getElementById('ns-insp-work-phone').innerHTML = '...';
+      document.getElementById('ns-insp-email').innerHTML = '...';
+      document.getElementById('ns-insp-cell-1').innerHTML = '...';
+      document.getElementById('ns-insp-cell-2').innerHTML = '...';
+      document.getElementById('ns-insp-comments').textContent = '...';
+      document.getElementById('ns-insp-client-fetch-status').textContent = clientInternalId ? 'Fetching...' : '-';
+      document.getElementById('ns-insp-client-fetch-status').style.color = 'rgb(161, 161, 170)';
+
+      document.getElementById('ns-insp-notes-count').textContent = '-';
+      document.getElementById('ns-insp-notes-list').innerHTML = '<div style="color:rgb(161, 161, 170);">' + (clientInternalId ? 'Loading notes...' : 'Waiting for click...') + '</div>';
+      document.getElementById('ns-insp-btn-save-note').disabled = !clientInternalId;
+
+      const btnClient = document.getElementById('ns-insp-btn-client');
+      if (clientInternalId) {
+        btnClient.href = '/app/common/entity/custjob.nl?id=' + clientInternalId;
+        btnClient.textContent = `Open Master Client File [id=${clientInternalId}]`;
+        btnClient.style.pointerEvents = 'auto';
+        btnClient.style.opacity = '1';
+      } else {
+        btnClient.style.pointerEvents = 'none';
+        btnClient.style.opacity = '0.35';
+        btnClient.textContent = 'Open Master Client File (custjob.nl)';
+      }
+
       const win = await getSeminarPiPWindow();
       if (win) {
         const d = win.document;
@@ -1187,17 +1236,16 @@
       }
 
       if (clientInternalId) {
-        activeClientInternalId = clientInternalId;
-        const btnClient = document.getElementById('ns-insp-btn-client');
-        btnClient.href = '/app/common/entity/custjob.nl?id=' + clientInternalId;
-        btnClient.textContent = `Open Master Client File [id=${clientInternalId}]`;
-        btnClient.style.pointerEvents = 'auto';
-        btnClient.style.opacity = '1';
-        document.getElementById('ns-insp-btn-save-note').disabled = false;
+        const capturedId = clientInternalId;
+        getClientData(capturedId, cleanAttendeeName).then(clientData => {
+          if (activeClientInternalId !== capturedId) return;
 
-        getClientData(clientInternalId, cleanAttendeeName).then(clientData => {
           document.getElementById('ns-insp-full-client').textContent = clientData.companyName || cleanAttendeeName;
-          document.getElementById('ns-event-box-client').textContent = 'Client: ' + (clientData.companyName || cleanAttendeeName);
+          
+          // Fixed: Guarded update to avoid throwing a null exception
+          const eventBoxClientEl = document.getElementById('ns-event-box-client');
+          if (eventBoxClientEl) eventBoxClientEl.textContent = 'Client: ' + (clientData.companyName || cleanAttendeeName);
+
           document.getElementById('ns-insp-work-phone').innerHTML = clientData.workPhone ? `<a href="tel:${clientData.workPhone}">${clientData.workPhone}</a>` : '-';
           document.getElementById('ns-insp-email').innerHTML = clientData.email ? `<a href="mailto:${clientData.email}">${clientData.email}</a>` : '-';
           document.getElementById('ns-insp-comments').textContent = clientData.comments || 'None recorded';
@@ -1216,9 +1264,17 @@
           }
           document.getElementById('ns-insp-client-fetch-status').textContent = 'Resolved';
           document.getElementById('ns-insp-client-fetch-status').style.color = 'rgb(52, 211, 153)';
+        }).catch(err => {
+          console.error('Failed to load client data in event mode:', err);
+          if (activeClientInternalId === capturedId) {
+            document.getElementById('ns-insp-client-fetch-status').textContent = 'Error';
+            document.getElementById('ns-insp-client-fetch-status').style.color = 'rgb(248, 113, 113)';
+          }
         });
 
-        getAllAttendance(clientInternalId).then(allAttendance => {
+        getAllAttendance(capturedId).then(allAttendance => {
+          if (activeClientInternalId !== capturedId) return;
+
           const displayAttendance = boardEvent
             ? allAttendance.filter(item => {
                 const itemDate = normalizeDate(item.date);
@@ -1238,7 +1294,6 @@
           };
           renderSeminarInPiP(displayAttendance, eventDisplayHeader, cleanAttendeeName, dateBlock);
 
-          /* If a contact is present for this event, route their PDF to the open PDF window */
           if (displayAttendance.length > 0 && displayAttendance[0].contactId) {
             activeContactId = displayAttendance[0].contactId;
             activeContactName = displayAttendance[0].contactName;
@@ -1251,10 +1306,8 @@
       }
     }
 
-    /* Bind PDF PiP trigger */
     document.getElementById('ns-insp-btn-pdf').onclick = openPdfPiP;
 
-    /* Note Save Action */
     document.getElementById('ns-insp-btn-save-note').onclick = async () => {
       const inp = document.getElementById('ns-insp-new-note');
       const st = document.getElementById('ns-insp-save-status');
@@ -1293,7 +1346,6 @@
       }
     };
 
-    /* Search attendee on board */
     const searchInp = document.getElementById('ns-insp-search');
     const searchDrop = document.getElementById('ns-insp-dropdown');
 
@@ -1335,7 +1387,6 @@
       }
     };
 
-    /* Click listener on parent NetSuite window */
     function onBoardClick(e) {
       const courseTarget = e.target.closest('[data-courseattendeeid]');
       if (courseTarget) {
@@ -1353,9 +1404,10 @@
       const clientCell = e.target.closest('[data-clientid], [data-customerid], td.clientRecord');
       const attendeeNameEl = e.target.closest('.attendeeName, .attendeeNameWrap');
       const contactLinkEl = e.target.closest('a[href*="contact.nl?id="], a[href*="/entity/contact.nl?id="]');
+      const eventRecordCell = e.target.closest('.eventRecord');
 
-      if (clientCell || attendeeNameEl || contactLinkEl) {
-        selectEventAttendee(clientCell || attendeeNameEl || contactLinkEl);
+      if (clientCell || attendeeNameEl || contactLinkEl || eventRecordCell) {
+        selectEventAttendee(attendeeNameEl || contactLinkEl || clientCell || eventRecordCell);
       }
     }
 

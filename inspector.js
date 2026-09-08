@@ -1993,6 +1993,12 @@
         resolvedCompany = (fieldVal && !/dashboard|customer 360|list view|search/i.test(fieldVal)) ? fieldVal : (fallbackBoardName || 'Client Master');
       }
 
+      // NEW: Extract .uir-record-id from the client page and use it if it exists
+      const uirRecordId = (doc.querySelector('.uir-record-id')?.innerText || '').trim();
+      if (uirRecordId) {
+        resolvedCompany = uirRecordId;
+      }
+
       let notes = extractNotes(doc);
       if (notes.length === 0) {
         try {
@@ -2300,6 +2306,10 @@
 
         if (clientInternalId) {
           getClientData(clientInternalId, clientDisplayText).then(clientData => {
+            // NEW: Update the display name with the fetched uir-record-id
+            if (clientData.companyName) {
+              document.getElementById('ns-insp-full-client').textContent = clientData.companyName;
+            }
             document.getElementById('ns-insp-work-phone').innerHTML = clientData.workPhone ? `<a href="tel:${clientData.workPhone}">${clientData.workPhone}</a>` : '-';
             document.getElementById('ns-insp-email').innerHTML = clientData.email ? `<a href="mailto:${clientData.email}">${clientData.email}</a>` : '-';
             document.getElementById('ns-insp-comments').textContent = clientData.comments || 'None recorded';

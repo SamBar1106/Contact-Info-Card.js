@@ -725,10 +725,10 @@
 
               // 1. Extract Status
               let exactStatus = '';
-              const selectedDropdown = recDoc.querySelector('.dropdownDiv .dropdownSelected');
+              const inptField = recDoc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
               
-              if (selectedDropdown) {
-                exactStatus = selectedDropdown.innerText.trim();
+              if (inptField && inptField.value) {
+                exactStatus = inptField.value.trim();
               } else {
                 const hiddenInput = recDoc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
                 if (hiddenInput && hiddenInput.value) {
@@ -2277,10 +2277,10 @@
 
         // ==== EXACT DOM EXTRACTION FOR COURSE ATTENDEES (INSPECTOR PANEL) ====
         let exactStatus = '';
-        const selectedDropdown = doc.querySelector('.dropdownDiv .dropdownSelected');
+        const inptField = doc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
         
-        if (selectedDropdown) {
-          exactStatus = selectedDropdown.innerText.trim();
+        if (inptField && inptField.value) {
+          exactStatus = inptField.value.trim();
         } else {
           const hiddenInput = doc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
           if (hiddenInput && hiddenInput.value) {

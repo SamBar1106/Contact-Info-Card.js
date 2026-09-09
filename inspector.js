@@ -714,6 +714,79 @@
           });
         });
 
+        // ==== EXACT DOM EXTRACTION FOR COURSE ATTENDEES ====
+        await Promise.all(records.map(async (rec) => {
+          if (rec.editUrl && rec.editUrl.includes('rectype=56')) {
+            try {
+              const req = await fetch(rec.editUrl);
+              if (!req.ok) return;
+              const text = await req.text();
+              const recDoc = new DOMParser().parseFromString(text, 'text/html');
+
+              // 1. Extract Status
+              let exactStatus = '';
+              const statusSelect = recDoc.querySelector('select[name="custrecord_crs_attendee_status"]');
+              const statusInput = recDoc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]'); 
+              const statusView = recDoc.querySelector('#custrecord_crs_attendee_status_val');
+
+              if (statusSelect) {
+                exactStatus = statusSelect.options[statusSelect.selectedIndex]?.text || '';
+              } else if (statusInput) {
+                exactStatus = statusInput.value || '';
+              } else if (statusView) {
+                exactStatus = statusView.innerText.trim() || '';
+              }
+
+              if (exactStatus) rec.status = exactStatus;
+
+              // 2. Read Week-Ending Date
+              let weekEndingDate = null;
+              const weekEndingEl = recDoc.querySelector('#custrecord_crs_attendee_week_ending_display');
+              if (weekEndingEl && weekEndingEl.value) {
+                weekEndingDate = new Date(weekEndingEl.value);
+              }
+
+              // 3. Date Math
+              if (weekEndingDate && !isNaN(weekEndingDate.getTime())) {
+                const dayOffsets = { 'tue': -8, 'wed': -7, 'thu': -6, 'fri': -5, 'sat': -4 };
+                const daysToCheck = ['tue', 'wed', 'thu', 'fri', 'sat'];
+                const validDates = [];
+
+                daysToCheck.forEach(day => {
+                  const checkbox = recDoc.querySelector(`#custrecord_crs_attendee_${day}_fs_inp`);
+                  if (checkbox && checkbox.checked) {
+                    const calcDate = new Date(weekEndingDate);
+                    calcDate.setDate(weekEndingDate.getDate() + dayOffsets[day]);
+                    validDates.push(calcDate);
+                  }
+                });
+
+                if (validDates.length > 0) {
+                  validDates.sort((a,b) => a - b);
+                  const first = validDates[0];
+                  const last = validDates[validDates.length - 1];
+                  
+                  rec.iso = `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-${String(first.getDate()).padStart(2, '0')}`;
+                  
+                  const m1 = first.getMonth() + 1, d1 = first.getDate(), y1 = first.getFullYear();
+                  const m2 = last.getMonth() + 1, d2 = last.getDate();
+
+                  if (validDates.length === 1) {
+                    rec.rawDate = `${m1}/${d1}/${y1}`;
+                  } else if (m1 === m2) {
+                    rec.rawDate = `${m1}/${d1} - ${m1}/${d2}/${y1}`;
+                  } else {
+                    rec.rawDate = `${m1}/${d1} - ${m2}/${d2}/${y1}`;
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn('Failed to extract accurate course attendee details:', err);
+            }
+          }
+        }));
+        // ==== END EXACT DOM EXTRACTION ====
+
         cache.contactSchedules.set(contactId, records);
         return records;
       } catch (err) {
@@ -2196,6 +2269,68 @@
         const res = await fetch('/app/common/custom/custrecordentry.nl?rectype=56&id=' + attendeeId);
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        // ==== EXACT DOM EXTRACTION FOR COURSE ATTENDEES (INSPECTOR PANEL) ====
+        let exactStatus = '';
+        const statusSelect = doc.querySelector('select[name="custrecord_crs_attendee_status"]');
+        const statusInput = doc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]'); 
+        const statusView = doc.querySelector('#custrecord_crs_attendee_status_val');
+
+        if (statusSelect) {
+          exactStatus = statusSelect.options[statusSelect.selectedIndex]?.text || '';
+        } else if (statusInput) {
+          exactStatus = statusInput.value || '';
+        } else if (statusView) {
+          exactStatus = statusView.innerText.trim() || '';
+        }
+
+        let weekEndingDate = null;
+        const weekEndingEl = doc.querySelector('#custrecord_crs_attendee_week_ending_display');
+        if (weekEndingEl && weekEndingEl.value) {
+          weekEndingDate = new Date(weekEndingEl.value);
+        }
+
+        if (weekEndingDate && !isNaN(weekEndingDate.getTime())) {
+          const dayOffsets = { 'tue': -8, 'wed': -7, 'thu': -6, 'fri': -5, 'sat': -4 };
+          const daysToCheck = ['tue', 'wed', 'thu', 'fri', 'sat'];
+          const validDates = [];
+
+          daysToCheck.forEach(day => {
+            const checkbox = doc.querySelector(`#custrecord_crs_attendee_${day}_fs_inp`);
+            if (checkbox && checkbox.checked) {
+              const calcDate = new Date(weekEndingDate);
+              calcDate.setDate(weekEndingDate.getDate() + dayOffsets[day]);
+              validDates.push(calcDate);
+            }
+          });
+
+          if (validDates.length > 0) {
+            validDates.sort((a,b) => a - b);
+            const first = validDates[0];
+            const last = validDates[validDates.length - 1];
+            const m1 = first.getMonth() + 1, d1 = first.getDate(), y1 = first.getFullYear();
+            const m2 = last.getMonth() + 1, d2 = last.getDate();
+            let dateStr = '';
+            if (validDates.length === 1) {
+              dateStr = `${m1}/${d1}/${y1}`;
+            } else if (m1 === m2) {
+              dateStr = `${m1}/${d1} - ${m1}/${d2}/${y1}`;
+            } else {
+              dateStr = `${m1}/${d1} - ${m2}/${d2}/${y1}`;
+            }
+
+            const statusHtml = exactStatus ? `<div style="margin-top:4px;">${getStatusBadge(exactStatus)}</div>` : '';
+            document.getElementById('ns-insp-sched-day').innerHTML = `<div>${dateStr}</div>${statusHtml}`;
+          } else if (exactStatus) {
+            const currentHtml = document.getElementById('ns-insp-sched-day').innerHTML;
+            const textOnlyDates = currentHtml.replace(/<div[^>]*>.*?<\/div>/gi, (match) => {
+               if(match.includes('pill') || match.includes('rgba')) return '';
+               return match;
+            });
+            document.getElementById('ns-insp-sched-day').innerHTML = `${textOnlyDates}<div style="margin-top:4px;">${getStatusBadge(exactStatus)}</div>`;
+          }
+        }
+        // ==== END EXACT DOM EXTRACTION ====
 
         doc.querySelectorAll('header, nav, [id="ns-header"], [id="recent-records"], [id="header"], .uir-header, [id="div__nav"]').forEach(e => e.remove());
         const mainForm = doc.querySelector('form[name="main_form"], form[id="main_form"], [id="div__body"]') || doc.body;

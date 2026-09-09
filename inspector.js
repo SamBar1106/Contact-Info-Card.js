@@ -1,4 +1,3 @@
-javascript
 (function(){
   const WIN_NAME = 'NSSchedulerInspectorAppWindow';
 

@@ -82,7 +82,7 @@
 
     function toAbsoluteNsUrl(url) {
       if (!url) return '';
-      if /^https?:\/\//i.test(url)) return url;
+      if (/^https?:\/\//i.test(url)) return url;
       const origin = getNsOrigin();
       const path = url.startsWith('/') ? url : ('/' + url);
       return origin ? (origin + path) : path;
@@ -723,23 +723,22 @@
               const text = await req.text();
               const recDoc = new DOMParser().parseFromString(text, 'text/html');
 
-              // 1. Extract Exact Status via Hidden Numeric ID
+              // 1. Extract Status
               let exactStatus = '';
-              const statusHiddenInput = recDoc.querySelector('input[type="hidden"][name="custrecord_crs_attendee_status"]');
-
-              if (statusHiddenInput && statusHiddenInput.value) {
-                const statusId = statusHiddenInput.value.trim();
-                const statusMap = {
-                  '1': 'Scheduled',
-                  '2': 'Confirmed',
-                  '4': 'No Show',
-                  '5': 'Schedule Change'
-                };
-                exactStatus = statusMap[statusId] || '';
+              const selectedDropdown = recDoc.querySelector('.dropdownDiv .dropdownSelected');
+              
+              if (selectedDropdown) {
+                exactStatus = selectedDropdown.innerText.trim();
               } else {
-                const statusView = recDoc.querySelector('#custrecord_crs_attendee_status_val');
-                if (statusView) {
-                  exactStatus = statusView.innerText.trim();
+                const hiddenInput = recDoc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
+                if (hiddenInput && hiddenInput.value) {
+                  const exactStatusMap = {
+                    '1': 'Scheduled',
+                    '2': 'Confirmed',
+                    '4': 'No Show',
+                    '5': 'Schedule Change'
+                  };
+                  exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
                 }
               }
 
@@ -2278,21 +2277,20 @@
 
         // ==== EXACT DOM EXTRACTION FOR COURSE ATTENDEES (INSPECTOR PANEL) ====
         let exactStatus = '';
-        const statusHiddenInput = doc.querySelector('input[type="hidden"][name="custrecord_crs_attendee_status"]');
+        const selectedDropdown = doc.querySelector('.dropdownDiv .dropdownSelected');
         
-        if (statusHiddenInput && statusHiddenInput.value) {
-          const statusId = statusHiddenInput.value.trim();
-          const statusMap = {
-            '1': 'Scheduled',
-            '2': 'Confirmed',
-            '4': 'No Show',
-            '5': 'Schedule Change'
-          };
-          exactStatus = statusMap[statusId] || '';
+        if (selectedDropdown) {
+          exactStatus = selectedDropdown.innerText.trim();
         } else {
-          const statusView = doc.querySelector('#custrecord_crs_attendee_status_val');
-          if (statusView) {
-            exactStatus = statusView.innerText.trim();
+          const hiddenInput = doc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
+          if (hiddenInput && hiddenInput.value) {
+            const exactStatusMap = {
+              '1': 'Scheduled',
+              '2': 'Confirmed',
+              '4': 'No Show',
+              '5': 'Schedule Change'
+            };
+            exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
           }
         }
 
@@ -2756,7 +2754,7 @@
       if (eventBox) eventBox.style.display = 'none';
 
       document.getElementById('ns-insp-contact-name').textContent = attendeeParsedName || 'Event Attendee';
-      document.getElementById('ns-insp-position').textContent = '...';
+      document.getElementById('ns-insp-position').textContent = 'Seminar Participant';
       document.getElementById('ns-insp-contact-phone').innerHTML = '...';
       document.getElementById('ns-insp-contact-email').innerHTML = '...';
       document.getElementById('ns-insp-contact-comments').textContent = 'Querying attendee file...';

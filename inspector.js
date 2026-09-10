@@ -385,8 +385,54 @@
       return '';
     }
 
+    /* Extract Attendee Status from a fetched NetSuite record page (edit OR view mode) */
+    function extractAttendeeStatus(doc) {
+      const VALID = ['Scheduled', 'Confirmed', 'Schedule Change', 'No Show'];
+      const STATUS_MAP = { '1': 'Scheduled', '2': 'Confirmed', '4': 'No Show', '5': 'Schedule Change' };
+
+      // --- EDIT MODE: hidden numeric input (most reliable when present) ---
+      const hddn = Array.from(doc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]'))
+                        .find(el => !el.id.includes('orig') && !el.id.includes('req') && !el.id.includes('changed'));
+      if (hddn && hddn.value && STATUS_MAP[hddn.value.trim()]) return STATUS_MAP[hddn.value.trim()];
+
+      // --- EDIT MODE: visible text input ---
+      const inpt = doc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
+      if (inpt && VALID.includes(inpt.value.trim())) return inpt.value.trim();
+
+      // --- EDIT MODE: select element ---
+      const sel = doc.querySelector('select[name="custrecord_crs_attendee_status"]');
+      if (sel && sel.selectedIndex >= 0) {
+        const selText = sel.options[sel.selectedIndex]?.text?.trim();
+        if (VALID.includes(selText)) return selText;
+      }
+
+      // --- VIEW MODE: span with _val id ---
+      const valSpan = doc.querySelector('[id$="custrecord_crs_attendee_status_val"]');
+      if (valSpan) {
+        const t = (valSpan.innerText || valSpan.textContent || '').trim();
+        if (VALID.includes(t)) return t;
+      }
+
+      // --- VIEW MODE: find "Status" label cell and read its sibling value cell ---
+      // NetSuite renders view-mode fields as <td class="labelcell">Status</td><td class="datacell">Confirmed</td>
+      const allTds = Array.from(doc.querySelectorAll('td'));
+      for (const td of allTds) {
+        const label = (td.innerText || td.textContent || '').replace(/\s+/g, ' ').trim();
+        if (/^Status$/i.test(label)) {
+          const sibling = td.nextElementSibling;
+          if (sibling) {
+            const val = (sibling.innerText || sibling.textContent || '').replace(/\s+/g, ' ').trim();
+            if (VALID.includes(val)) return val;
+          }
+        }
+      }
+
+      return '';
+    }
+
     /* Extract Date Substring and ISO from Line */
     function extractDateFromLine(line) {
+
       if (!line) return null;
 
       const rangeM = line.match(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\s*(?:-|to|–)\s*\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/i);
@@ -724,27 +770,7 @@
               const recDoc = new DOMParser().parseFromString(text, 'text/html');
 
               // 1. Extract Status
-              let exactStatus = '';
-              const hiddenInput = recDoc.querySelector('input[name="custrecord_crs_attendee_status"]') || 
-                                  Array.from(recDoc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]')).find(el => !el.id.includes('orig') && !el.id.includes('req'));
-              const inptText = recDoc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
-              const statusSelect = recDoc.querySelector('select[name="custrecord_crs_attendee_status"]');
-              const readOnlyView = recDoc.querySelector('#custrecord_crs_attendee_status_val');
-
-              if (hiddenInput && hiddenInput.value) {
-                const exactStatusMap = {
-                  '1': 'Scheduled',
-                  '2': 'Confirmed',
-                  '4': 'No Show',
-                  '5': 'Schedule Change'
-                };
-                exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
-              }
-              
-              if (!exactStatus && inptText && inptText.value) exactStatus = inptText.value.trim();
-              if (!exactStatus && statusSelect) exactStatus = statusSelect.options[statusSelect.selectedIndex]?.text || '';
-              if (!exactStatus && readOnlyView) exactStatus = readOnlyView.innerText.trim();
-
+              const exactStatus = extractAttendeeStatus(recDoc);
               if (exactStatus) rec.status = exactStatus;
 
               // 2. Read Week-Ending Date
@@ -2275,26 +2301,7 @@
             const text = await req.text();
             const recDoc = new DOMParser().parseFromString(text, 'text/html');
 
-            let exactStatus = '';
-            const hiddenInput = recDoc.querySelector('input[name="custrecord_crs_attendee_status"]') || 
-                                Array.from(recDoc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]')).find(el => !el.id.includes('orig') && !el.id.includes('req'));
-            const inptText = recDoc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
-            const statusSelect = recDoc.querySelector('select[name="custrecord_crs_attendee_status"]');
-            const readOnlyView = recDoc.querySelector('#custrecord_crs_attendee_status_val');
-
-            if (hiddenInput && hiddenInput.value) {
-              const exactStatusMap = {
-                '1': 'Scheduled',
-                '2': 'Confirmed',
-                '4': 'No Show',
-                '5': 'Schedule Change'
-              };
-              exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
-            }
-            
-            if (!exactStatus && inptText && inptText.value) exactStatus = inptText.value.trim();
-            if (!exactStatus && statusSelect) exactStatus = statusSelect.options[statusSelect.selectedIndex]?.text || '';
-            if (!exactStatus && readOnlyView) exactStatus = readOnlyView.innerText.trim();
+            const exactStatus = extractAttendeeStatus(recDoc);
             if (exactStatus) rec.status = exactStatus;
           } catch(e) {}
         }
@@ -2312,26 +2319,7 @@
         const doc = new DOMParser().parseFromString(html, 'text/html');
 
         // ==== EXACT DOM EXTRACTION FOR COURSE ATTENDEES (INSPECTOR PANEL) ====
-        let exactStatus = '';
-        const hiddenInput = doc.querySelector('input[name="custrecord_crs_attendee_status"]') || 
-                            Array.from(doc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]')).find(el => !el.id.includes('orig') && !el.id.includes('req'));
-        const inptText = doc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
-        const statusSelect = doc.querySelector('select[name="custrecord_crs_attendee_status"]');
-        const readOnlyView = doc.querySelector('#custrecord_crs_attendee_status_val');
-
-        if (hiddenInput && hiddenInput.value) {
-          const exactStatusMap = {
-            '1': 'Scheduled',
-            '2': 'Confirmed',
-            '4': 'No Show',
-            '5': 'Schedule Change'
-          };
-          exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
-        }
-        
-        if (!exactStatus && inptText && inptText.value) exactStatus = inptText.value.trim();
-        if (!exactStatus && statusSelect) exactStatus = statusSelect.options[statusSelect.selectedIndex]?.text || '';
-        if (!exactStatus && readOnlyView) exactStatus = readOnlyView.innerText.trim();
+        const exactStatus = extractAttendeeStatus(doc);
 
         let weekEndingDate = null;
         const weekEndingEl = doc.querySelector('#custrecord_crs_attendee_week_ending_display');

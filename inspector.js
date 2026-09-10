@@ -2258,6 +2258,8 @@
           let attendanceStatus = '';
           let seminarTitle = '';
 
+          const VALID_STATUSES = ['Scheduled', 'Confirmed', 'Schedule Change', 'No Show'];
+
           row.querySelectorAll('td').forEach(cell => {
             if (cell.contains(cLink)) return;
             const text = (cell.innerText || cell.textContent || '').replace(/\s+/g, ' ').trim();
@@ -2266,10 +2268,10 @@
             const dInfo = extractDateFromLine(text);
             if (!attendanceDate && dInfo && text.length < 30) {
               attendanceDate = dInfo.rawDate;
-            } else if (!attendanceStatus && /\b(scheduled|rescheduled|re-scheduled|resched|schedule\s*change|attended|confirmed|cancell?ed|no[-\s]?show|noshow|ns|registered|enrolled|waitlist(ed)?|wait[-\s]?list|completed|invited|declined|tentative|pending|standby|present|did not attend|absent)\b/i.test(text)) {
-              attendanceStatus = text;
+            } else if (!attendanceStatus && VALID_STATUSES.some(s => s.toLowerCase() === text.toLowerCase())) {
+              attendanceStatus = VALID_STATUSES.find(s => s.toLowerCase() === text.toLowerCase());
             } else if (!seminarTitle && text.length > 4) {
-              const isStatusWord = /\b(scheduled|rescheduled|confirmed|cancell?ed|no[-\s]?show|attended|completed|waitlist|registered)\b/i.test(text);
+              const isStatusWord = VALID_STATUSES.some(s => s.toLowerCase() === text.toLowerCase());
               if (!isStatusWord && !/^\d+$/.test(text) && !/^(yes|no|none)$/i.test(text)) {
                 seminarTitle = text;
               }

@@ -784,7 +784,7 @@
               console.warn('Failed to extract accurate course attendee details:', err);
             }
           }
-        }));
+        }
         // ==== END EXACT DOM EXTRACTION ====
 
         cache.contactSchedules.set(contactId, records);

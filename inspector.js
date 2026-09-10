@@ -677,20 +677,21 @@
               }
             }
 
-            let rawDate = '';
-            for (const c of cells) {
-              const t = (c.innerText || c.textContent || '').trim();
-              const dM = extractDateFromLine(t);
-              if (dM) { rawDate = dM.rawDate; break; }
-            }
-
             const tbl = row.closest('table');
             const headerRow = tbl ? tbl.querySelector('tr.uir-list-header-tr, tr:has(.listheader), tr:has(th)') : null;
             const attendedDays = [];
+            let weekEndingColIdx = -1;
 
             if (headerRow) {
               Array.from(headerRow.children).forEach((hCell, idx) => {
-                const hTxt = (hCell.innerText || hCell.textContent || '').trim().toLowerCase();
+                const hTxt = (hCell.innerText || hCell.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+                // Track Week Ending column index
+                if (/week\s*end/i.test(hTxt) && weekEndingColIdx === -1) {
+                  weekEndingColIdx = idx;
+                }
+
+                // Track checked day columns
                 const dm = hTxt.match(/\b(mon|tue|wed|thu|fri|sat)\b/i);
                 if (dm && cells[idx]) {
                   const v = (cells[idx].innerText || cells[idx].textContent || '').trim().toLowerCase();
@@ -699,6 +700,21 @@
                   }
                 }
               });
+            }
+
+            // Read Week Ending date: prefer the specific column, fall back to first date found in row
+            let rawDate = '';
+            if (weekEndingColIdx >= 0 && cells[weekEndingColIdx]) {
+              const t = (cells[weekEndingColIdx].innerText || cells[weekEndingColIdx].textContent || '').trim();
+              const dM = extractDateFromLine(t);
+              if (dM) rawDate = dM.rawDate;
+            }
+            if (!rawDate) {
+              for (const c of cells) {
+                const t = (c.innerText || c.textContent || '').trim();
+                const dM = extractDateFromLine(t);
+                if (dM) { rawDate = dM.rawDate; break; }
+              }
             }
 
             let finalDateStr = rawDate;

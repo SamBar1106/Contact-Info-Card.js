@@ -959,7 +959,7 @@
             <div id="ns-insp-comments" class="scroll-box">-</div>
             
             <button id="ns-insp-btn-scan-60d" class="btn btn-solid" style="margin-top:10px; width:100%; background:linear-gradient(180deg,#38bdf8 0%,#0284c7 100%); color:white; border:none; padding:8px 12px;">
-              📅 Scan Office 60-Day Outlook (PDFs)
+              📅 Scan Office 30-Day Outlook (PDFs)
             </button>
           </div>
 
@@ -1041,7 +1041,7 @@
       return `<span class="pill" style="background:${bg}; color:${color}; border:1px solid ${border}; font-size:10px; font-weight:700;">${status}</span>`;
     }
 
-    /* Standalone 60-Day Office Outlook Window Scanner */
+    /* Standalone 30-Day Office Outlook Window Scanner */
     btnScan60d.onclick = async () => {
       if (!activeClientInternalId) {
         alert('Please click on an attendee or client on the board first.');
@@ -1067,7 +1067,7 @@
       }
 
       if (!outlookWindow) {
-        alert('Pop-up Blocked! Please allow pop-ups to view the 60-Day Office Outlook.');
+        alert('Pop-up Blocked! Please allow pop-ups to view the 30-Day Office Outlook.');
         return;
       }
 
@@ -1078,7 +1078,7 @@
         <html>
         <head>
           <meta charset="UTF-8">
-          <title>60-Day Outlook • ${scanClientName}</title>
+          <title>30-Day Outlook • ${scanClientName}</title>
           <style>
             * { box-sizing: border-box; }
             html, body {
@@ -1142,7 +1142,7 @@
         <body>
           <div class="nav-bar">
             <div>
-              <div style="font-weight:700; font-size:14px; color:#38bdf8;">📅 Office 60-Day Attendance Outlook</div>
+              <div style="font-weight:700; font-size:14px; color:#38bdf8;">📅 Office 30-Day Attendance Outlook</div>
               <div id="out-client-header" style="font-size:11px; color:rgb(161,161,170); margin-top:2px;">Client: ${scanClientName}</div>
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
@@ -1283,7 +1283,7 @@
 
         const now = new Date();
         now.setHours(0, 0, 0, 0);
-        const sixtyDaysOut = new Date(now.getTime() + (60 * 24 * 60 * 60 * 1000));
+        const thirtyDaysOut = new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000));
 
         const upcomingEvents = [];
         let processedCount = 0;
@@ -1308,7 +1308,7 @@
                 const p = rec.iso.split('-').map(Number);
                 const dt = new Date(p[0], p[1] - 1, p[2]);
 
-                if (!isNaN(dt.getTime()) && dt >= now && dt <= sixtyDaysOut) {
+                if (!isNaN(dt.getTime()) && dt >= now && dt <= thirtyDaysOut) {
                   const diffDays = Math.ceil((dt - now) / (1000 * 60 * 60 * 24));
                   const k = `${contact.id}_${rec.title}_${rec.iso}`;
 
@@ -1341,7 +1341,7 @@
                 const p = dateInfo.iso.split('-').map(Number);
                 const dt = new Date(p[0], p[1] - 1, p[2]);
 
-                if (!isNaN(dt.getTime()) && dt >= now && dt <= sixtyDaysOut) {
+                if (!isNaN(dt.getTime()) && dt >= now && dt <= thirtyDaysOut) {
                   const diffDays = Math.ceil((dt - now) / (1000 * 60 * 60 * 24));
                   let cleanTitle = line.replace(dateInfo.rawDate, '')
                                        .replace(/\b(edit|view|scheduled|confirmed|completed|rescheduled|schedule\s*change|the|on|dates?)\b/gi, '')

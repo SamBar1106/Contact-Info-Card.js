@@ -2257,6 +2257,30 @@
           }
         });
       });
+      // ==== EXACT DOM EXTRACTION FOR CLIENT ATTENDANCE ====
+      await Promise.all(results.map(async (rec) => {
+        if (rec.editUrl && rec.editUrl.includes('rectype=56')) {
+          try {
+            const req = await fetch(rec.editUrl);
+            if (!req.ok) return;
+            const text = await req.text();
+            const recDoc = new DOMParser().parseFromString(text, 'text/html');
+
+            let exactStatus = '';
+            const hiddenInput = recDoc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
+            if (hiddenInput && hiddenInput.value) {
+              const exactStatusMap = {
+                '1': 'Scheduled',
+                '2': 'Confirmed',
+                '4': 'No Show',
+                '5': 'Schedule Change'
+              };
+              exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
+            }
+            if (exactStatus) rec.status = exactStatus;
+          } catch(e) {}
+        }
+      }));
 
       cache.eventAttendance.set(clientId, results);
       return results;

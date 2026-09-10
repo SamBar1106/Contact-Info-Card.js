@@ -2110,7 +2110,7 @@
       return data;
     }
 
-    /* Resilient Multi-Attendee Attendance Parsing */
+        /* Resilient Multi-Attendee Attendance Parsing */
     async function getAllAttendance(clientId) {
       if (cache.eventAttendance.has(clientId)) return cache.eventAttendance.get(clientId);
 
@@ -2243,6 +2243,7 @@
           }
         });
       });
+      
       // ==== EXACT DOM EXTRACTION FOR CLIENT ATTENDANCE ====
       for (const rec of results) {
         if (rec.editUrl && rec.editUrl.includes('rectype=56')) {
@@ -2254,6 +2255,48 @@
 
             const exactStatus = extractAttendeeStatus(recDoc);
             if (exactStatus) rec.status = exactStatus;
+
+            // 2. Read Week-Ending Date
+            let weekEndingDate = null;
+            const weekEndingEl = recDoc.querySelector('#custrecord_crs_attendee_week_ending_display');
+            if (weekEndingEl && weekEndingEl.value) {
+              weekEndingDate = new Date(weekEndingEl.value);
+            }
+
+            // 3. Date Math
+            if (weekEndingDate && !isNaN(weekEndingDate.getTime())) {
+              const dayOffsets = { 'tue': -8, 'wed': -7, 'thu': -6, 'fri': -5, 'sat': -4 };
+              const daysToCheck = ['tue', 'wed', 'thu', 'fri', 'sat'];
+              const validDates = [];
+
+              daysToCheck.forEach(day => {
+                const checkbox = recDoc.querySelector(`#custrecord_crs_attendee_${day}_fs_inp`);
+                if (checkbox && checkbox.checked) {
+                  const calcDate = new Date(weekEndingDate);
+                  calcDate.setDate(weekEndingDate.getDate() + dayOffsets[day]);
+                  validDates.push(calcDate);
+                }
+              });
+
+              if (validDates.length > 0) {
+                validDates.sort((a,b) => a - b);
+                const first = validDates[0];
+                const last = validDates[validDates.length - 1];
+                
+                rec.iso = `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-${String(first.getDate()).padStart(2, '0')}`;
+                
+                const m1 = first.getMonth() + 1, d1 = first.getDate(), y1 = first.getFullYear();
+                const m2 = last.getMonth() + 1, d2 = last.getDate();
+
+                if (validDates.length === 1) {
+                  rec.date = `${m1}/${d1}/${y1}`;
+                } else if (m1 === m2) {
+                  rec.date = `${m1}/${d1} - ${m1}/${d2}/${y1}`;
+                } else {
+                  rec.date = `${m1}/${d1} - ${m2}/${d2}/${y1}`;
+                }
+              }
+            }
           } catch(e) {}
         }
       }

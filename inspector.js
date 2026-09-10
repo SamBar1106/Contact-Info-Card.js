@@ -715,17 +715,18 @@
         });
 
         // ==== EXACT DOM EXTRACTION FOR COURSE ATTENDEES ====
-        await Promise.all(records.map(async (rec) => {
+        for (const rec of records) {
           if (rec.editUrl && rec.editUrl.includes('rectype=56')) {
             try {
               const req = await fetch(rec.editUrl);
-              if (!req.ok) return;
+              if (!req.ok) continue;
               const text = await req.text();
               const recDoc = new DOMParser().parseFromString(text, 'text/html');
 
               // 1. Extract Status
               let exactStatus = '';
-              const hiddenInput = recDoc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
+              const hiddenInputs = Array.from(recDoc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]'));
+              const hiddenInput = hiddenInputs.find(el => !el.id.includes('orig') && !el.id.includes('req')) || hiddenInputs[0];
               if (hiddenInput && hiddenInput.value) {
                 const exactStatusMap = {
                   '1': 'Scheduled',
@@ -2258,16 +2259,18 @@
         });
       });
       // ==== EXACT DOM EXTRACTION FOR CLIENT ATTENDANCE ====
-      await Promise.all(results.map(async (rec) => {
+      for (const rec of results) {
         if (rec.editUrl && rec.editUrl.includes('rectype=56')) {
           try {
             const req = await fetch(rec.editUrl);
-            if (!req.ok) return;
+            if (!req.ok) continue;
             const text = await req.text();
             const recDoc = new DOMParser().parseFromString(text, 'text/html');
 
             let exactStatus = '';
-            const hiddenInput = recDoc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
+            const hiddenInputs = Array.from(recDoc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]'));
+            const hiddenInput = hiddenInputs.find(el => !el.id.includes('orig') && !el.id.includes('req')) || hiddenInputs[0];
+            
             if (hiddenInput && hiddenInput.value) {
               const exactStatusMap = {
                 '1': 'Scheduled',
@@ -2280,7 +2283,7 @@
             if (exactStatus) rec.status = exactStatus;
           } catch(e) {}
         }
-      }));
+      }
 
       cache.eventAttendance.set(clientId, results);
       return results;
@@ -2295,7 +2298,8 @@
 
         // ==== EXACT DOM EXTRACTION FOR COURSE ATTENDEES (INSPECTOR PANEL) ====
         let exactStatus = '';
-        const hiddenInput = doc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
+        const hiddenInputs = Array.from(doc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]'));
+        const hiddenInput = hiddenInputs.find(el => !el.id.includes('orig') && !el.id.includes('req')) || hiddenInputs[0];
         if (hiddenInput && hiddenInput.value) {
           const exactStatusMap = {
             '1': 'Scheduled',

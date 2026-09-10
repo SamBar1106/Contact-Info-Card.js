@@ -725,8 +725,12 @@
 
               // 1. Extract Status
               let exactStatus = '';
-              const hiddenInputs = Array.from(recDoc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]'));
-              const hiddenInput = hiddenInputs.find(el => !el.id.includes('orig') && !el.id.includes('req')) || hiddenInputs[0];
+              const hiddenInput = recDoc.querySelector('input[name="custrecord_crs_attendee_status"]') || 
+                                  Array.from(recDoc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]')).find(el => !el.id.includes('orig') && !el.id.includes('req'));
+              const inptText = recDoc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
+              const statusSelect = recDoc.querySelector('select[name="custrecord_crs_attendee_status"]');
+              const readOnlyView = recDoc.querySelector('#custrecord_crs_attendee_status_val');
+
               if (hiddenInput && hiddenInput.value) {
                 const exactStatusMap = {
                   '1': 'Scheduled',
@@ -736,6 +740,10 @@
                 };
                 exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
               }
+              
+              if (!exactStatus && inptText && inptText.value) exactStatus = inptText.value.trim();
+              if (!exactStatus && statusSelect) exactStatus = statusSelect.options[statusSelect.selectedIndex]?.text || '';
+              if (!exactStatus && readOnlyView) exactStatus = readOnlyView.innerText.trim();
 
               if (exactStatus) rec.status = exactStatus;
 
@@ -2268,9 +2276,12 @@
             const recDoc = new DOMParser().parseFromString(text, 'text/html');
 
             let exactStatus = '';
-            const hiddenInputs = Array.from(recDoc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]'));
-            const hiddenInput = hiddenInputs.find(el => !el.id.includes('orig') && !el.id.includes('req')) || hiddenInputs[0];
-            
+            const hiddenInput = recDoc.querySelector('input[name="custrecord_crs_attendee_status"]') || 
+                                Array.from(recDoc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]')).find(el => !el.id.includes('orig') && !el.id.includes('req'));
+            const inptText = recDoc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
+            const statusSelect = recDoc.querySelector('select[name="custrecord_crs_attendee_status"]');
+            const readOnlyView = recDoc.querySelector('#custrecord_crs_attendee_status_val');
+
             if (hiddenInput && hiddenInput.value) {
               const exactStatusMap = {
                 '1': 'Scheduled',
@@ -2280,6 +2291,10 @@
               };
               exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
             }
+            
+            if (!exactStatus && inptText && inptText.value) exactStatus = inptText.value.trim();
+            if (!exactStatus && statusSelect) exactStatus = statusSelect.options[statusSelect.selectedIndex]?.text || '';
+            if (!exactStatus && readOnlyView) exactStatus = readOnlyView.innerText.trim();
             if (exactStatus) rec.status = exactStatus;
           } catch(e) {}
         }
@@ -2298,8 +2313,12 @@
 
         // ==== EXACT DOM EXTRACTION FOR COURSE ATTENDEES (INSPECTOR PANEL) ====
         let exactStatus = '';
-        const hiddenInputs = Array.from(doc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]'));
-        const hiddenInput = hiddenInputs.find(el => !el.id.includes('orig') && !el.id.includes('req')) || hiddenInputs[0];
+        const hiddenInput = doc.querySelector('input[name="custrecord_crs_attendee_status"]') || 
+                            Array.from(doc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]')).find(el => !el.id.includes('orig') && !el.id.includes('req'));
+        const inptText = doc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
+        const statusSelect = doc.querySelector('select[name="custrecord_crs_attendee_status"]');
+        const readOnlyView = doc.querySelector('#custrecord_crs_attendee_status_val');
+
         if (hiddenInput && hiddenInput.value) {
           const exactStatusMap = {
             '1': 'Scheduled',
@@ -2309,6 +2328,10 @@
           };
           exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
         }
+        
+        if (!exactStatus && inptText && inptText.value) exactStatus = inptText.value.trim();
+        if (!exactStatus && statusSelect) exactStatus = statusSelect.options[statusSelect.selectedIndex]?.text || '';
+        if (!exactStatus && readOnlyView) exactStatus = readOnlyView.innerText.trim();
 
         let weekEndingDate = null;
         const weekEndingEl = doc.querySelector('#custrecord_crs_attendee_week_ending_display');

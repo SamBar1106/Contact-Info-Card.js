@@ -725,21 +725,15 @@
 
               // 1. Extract Status
               let exactStatus = '';
-              const inptField = recDoc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
-              
-              if (inptField && inptField.value) {
-                exactStatus = inptField.value.trim();
-              } else {
-                const hiddenInput = recDoc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
-                if (hiddenInput && hiddenInput.value) {
-                  const exactStatusMap = {
-                    '1': 'Scheduled',
-                    '2': 'Confirmed',
-                    '4': 'No Show',
-                    '5': 'Schedule Change'
-                  };
-                  exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
-                }
+              const hiddenInput = recDoc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
+              if (hiddenInput && hiddenInput.value) {
+                const exactStatusMap = {
+                  '1': 'Scheduled',
+                  '2': 'Confirmed',
+                  '4': 'No Show',
+                  '5': 'Schedule Change'
+                };
+                exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
               }
 
               if (exactStatus) rec.status = exactStatus;
@@ -2277,21 +2271,15 @@
 
         // ==== EXACT DOM EXTRACTION FOR COURSE ATTENDEES (INSPECTOR PANEL) ====
         let exactStatus = '';
-        const inptField = doc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
-        
-        if (inptField && inptField.value) {
-          exactStatus = inptField.value.trim();
-        } else {
-          const hiddenInput = doc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
-          if (hiddenInput && hiddenInput.value) {
-            const exactStatusMap = {
-              '1': 'Scheduled',
-              '2': 'Confirmed',
-              '4': 'No Show',
-              '5': 'Schedule Change'
-            };
-            exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
-          }
+        const hiddenInput = doc.querySelector('input[id^="hddn_custrecord_crs_attendee_status"]');
+        if (hiddenInput && hiddenInput.value) {
+          const exactStatusMap = {
+            '1': 'Scheduled',
+            '2': 'Confirmed',
+            '4': 'No Show',
+            '5': 'Schedule Change'
+          };
+          exactStatus = exactStatusMap[hiddenInput.value.trim()] || '';
         }
 
         let weekEndingDate = null;

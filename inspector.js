@@ -705,34 +705,36 @@
             let finalIso = normalizeDate(rawDate);
 
             if (finalIso && attendedDays.length > 0) {
+              // Week Ending is always a Wednesday. Session days are the PRIOR calendar week.
+              // Apply fixed backwards offsets from the Week Ending Wednesday.
+              const DAY_OFFSETS = { tue: -8, wed: -7, thu: -6, fri: -5, sat: -4 };
               const p = finalIso.split('-').map(Number);
-              const baseDt = new Date(p[0], p[1] - 1, p[2]);
-              const baseDay = baseDt.getDay();
-              const monOffset = baseDay === 0 ? -6 : 1 - baseDay;
-              const mondayDt = new Date(baseDt);
-              mondayDt.setDate(baseDt.getDate() + monOffset);
+              const weekEndingDt = new Date(p[0], p[1] - 1, p[2]);
 
-              const dayOffsetMap = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
-              const validOffsets = attendedDays.map(d => dayOffsetMap[d]).filter(n => n !== undefined).sort((a,b) => a - b);
-              
-              if (validOffsets.length > 0) {
-                const firstDayDt = new Date(mondayDt);
-                firstDayDt.setDate(mondayDt.getDate() + validOffsets[0]);
-                const lastDayDt = new Date(mondayDt);
-                lastDayDt.setDate(mondayDt.getDate() + validOffsets[validOffsets.length - 1]);
+              const validDates = attendedDays
+                .filter(d => DAY_OFFSETS[d] !== undefined)
+                .map(d => {
+                  const dt = new Date(weekEndingDt);
+                  dt.setDate(weekEndingDt.getDate() + DAY_OFFSETS[d]);
+                  return dt;
+                })
+                .sort((a, b) => a - b);
 
-                finalIso = `${firstDayDt.getFullYear()}-${String(firstDayDt.getMonth() + 1).padStart(2, '0')}-${String(firstDayDt.getDate()).padStart(2, '0')}`;
-                const m1 = firstDayDt.getMonth() + 1;
-                const d1 = firstDayDt.getDate();
-                const m2 = lastDayDt.getMonth() + 1;
-                const d2 = lastDayDt.getDate();
+              if (validDates.length > 0) {
+                const first = validDates[0];
+                const last  = validDates[validDates.length - 1];
 
-                if (validOffsets.length === 1) {
-                  finalDateStr = `${m1}/${d1}/${firstDayDt.getFullYear()}`;
+                finalIso = `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-${String(first.getDate()).padStart(2, '0')}`;
+
+                const m1 = first.getMonth() + 1, d1 = first.getDate(), y1 = first.getFullYear();
+                const m2 = last.getMonth()  + 1, d2 = last.getDate();
+
+                if (validDates.length === 1) {
+                  finalDateStr = `${m1}/${d1}/${y1}`;
                 } else if (m1 === m2) {
-                  finalDateStr = `${m1}/${d1} - ${m1}/${d2}/${firstDayDt.getFullYear()}`;
+                  finalDateStr = `${m1}/${d1} - ${m1}/${d2}/${y1}`;
                 } else {
-                  finalDateStr = `${m1}/${d1} - ${m2}/${d2}/${firstDayDt.getFullYear()}`;
+                  finalDateStr = `${m1}/${d1} - ${m2}/${d2}/${y1}`;
                 }
               }
             }

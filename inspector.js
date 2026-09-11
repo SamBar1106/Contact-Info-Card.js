@@ -1034,6 +1034,7 @@
                 contactId, 
                 eventTitle: seminarTitle, 
                 date: attendanceDate, 
+                rawDate: attendanceDate,
                 status: attendanceStatus || 'Scheduled', 
                 editUrl: rowEditUrl,
                 compoundKey 
@@ -1087,13 +1088,16 @@
                 const m1 = first.getMonth() + 1, d1 = first.getDate(), y1 = first.getFullYear();
                 const m2 = last.getMonth() + 1, d2 = last.getDate();
 
-                if (validDates.length === 1) {
-                  rec.date = `${m1}/${d1}/${y1}`;
-                } else if (m1 === m2) {
-                  rec.date = `${m1}/${d1} - ${m1}/${d2}/${y1}`;
-                } else {
-                  rec.date = `${m1}/${d1} - ${m2}/${d2}/${y1}`;
-                }
+                  if (validDates.length === 1) {
+                    rec.rawDate = `${m1}/${d1}/${y1}`;
+                    rec.date = `${m1}/${d1}/${y1}`;
+                  } else if (m1 === m2) {
+                    rec.rawDate = `${m1}/${d1} - ${m1}/${d2}/${y1}`;
+                    rec.date = `${m1}/${d1} - ${m1}/${d2}/${y1}`;
+                  } else {
+                    rec.rawDate = `${m1}/${d1} - ${m2}/${d2}/${y1}`;
+                    rec.date = `${m1}/${d1} - ${m2}/${d2}/${y1}`;
+                  }
               }
             }
           } catch(e) {}

@@ -1101,24 +1101,25 @@
             // 2. Read Week-Ending Date
             const weekEndingEl = recDoc.querySelector('#custrecord_crs_attendee_week_ending_display, #custrecord_crs_attendee_week_ending_val, [id$="custrecord_crs_attendee_week_ending_val"], [name="custrecord_crs_attendee_week_ending"]');
             const rawWeekVal = weekEndingEl ? (weekEndingEl.value || weekEndingEl.innerText || weekEndingEl.textContent || '').trim() : '';
-            const weekEndingDate = parseLocalDate(rawWeekVal);
+            const weekEndingIso = normalizeDate(rawWeekVal);
 
             // 3. Date Math
-            if (weekEndingDate && !isNaN(weekEndingDate.getTime())) {
-              const dayOffsets = { 'tue': -8, 'wed': -7, 'thu': -6, 'fri': -5, 'sat': -4 };
+            if (weekEndingIso) {
+              const DAY_OFFSETS = { tue: -8, wed: -7, thu: -6, fri: -5, sat: -4 };
               const daysToCheck = ['tue', 'wed', 'thu', 'fri', 'sat'];
-              const validDates = [];
+              const p = weekEndingIso.split('-').map(Number);
+              const weekEndingDt = new Date(p[0], p[1] - 1, p[2]);
 
-              daysToCheck.forEach(day => {
-                if (isCheckboxChecked(recDoc, day)) {
-                  const calcDate = new Date(weekEndingDate);
-                  calcDate.setDate(weekEndingDate.getDate() + dayOffsets[day]);
-                  validDates.push(calcDate);
-                }
-              });
+              const validDates = daysToCheck
+                .filter(day => isCheckboxChecked(recDoc, day))
+                .map(day => {
+                  const dt = new Date(weekEndingDt);
+                  dt.setDate(weekEndingDt.getDate() + DAY_OFFSETS[day]);
+                  return dt;
+                })
+                .sort((a, b) => a - b);
 
               if (validDates.length > 0) {
-                validDates.sort((a,b) => a - b);
                 const first = validDates[0];
                 const last = validDates[validDates.length - 1];
                 
@@ -1127,16 +1128,16 @@
                 const m1 = first.getMonth() + 1, d1 = first.getDate(), y1 = first.getFullYear();
                 const m2 = last.getMonth() + 1, d2 = last.getDate();
 
-                  if (validDates.length === 1) {
-                    rec.rawDate = `${m1}/${d1}/${y1}`;
-                    rec.date = `${m1}/${d1}/${y1}`;
-                  } else if (m1 === m2) {
-                    rec.rawDate = `${m1}/${d1} - ${m1}/${d2}/${y1}`;
-                    rec.date = `${m1}/${d1} - ${m1}/${d2}/${y1}`;
-                  } else {
-                    rec.rawDate = `${m1}/${d1} - ${m2}/${d2}/${y1}`;
-                    rec.date = `${m1}/${d1} - ${m2}/${d2}/${y1}`;
-                  }
+                if (validDates.length === 1) {
+                  rec.rawDate = `${m1}/${d1}/${y1}`;
+                  rec.date = `${m1}/${d1}/${y1}`;
+                } else if (m1 === m2) {
+                  rec.rawDate = `${m1}/${d1} - ${m1}/${d2}/${y1}`;
+                  rec.date = `${m1}/${d1} - ${m1}/${d2}/${y1}`;
+                } else {
+                  rec.rawDate = `${m1}/${d1} - ${m2}/${d2}/${y1}`;
+                  rec.date = `${m1}/${d1} - ${m2}/${d2}/${y1}`;
+                }
               }
             }
           } catch(e) {}
@@ -1158,23 +1159,24 @@
 
         const weekEndingEl = doc.querySelector('#custrecord_crs_attendee_week_ending_display, #custrecord_crs_attendee_week_ending_val, [id$="custrecord_crs_attendee_week_ending_val"], [name="custrecord_crs_attendee_week_ending"]');
         const rawWeekVal = weekEndingEl ? (weekEndingEl.value || weekEndingEl.innerText || weekEndingEl.textContent || '').trim() : '';
-        const weekEndingDate = parseLocalDate(rawWeekVal);
+        const weekEndingIso = normalizeDate(rawWeekVal);
 
-        if (weekEndingDate && !isNaN(weekEndingDate.getTime())) {
-          const dayOffsets = { 'tue': -8, 'wed': -7, 'thu': -6, 'fri': -5, 'sat': -4 };
+        if (weekEndingIso) {
+          const DAY_OFFSETS = { tue: -8, wed: -7, thu: -6, fri: -5, sat: -4 };
           const daysToCheck = ['tue', 'wed', 'thu', 'fri', 'sat'];
-          const validDates = [];
+          const p = weekEndingIso.split('-').map(Number);
+          const weekEndingDt = new Date(p[0], p[1] - 1, p[2]);
 
-          daysToCheck.forEach(day => {
-            if (isCheckboxChecked(doc, day)) {
-              const calcDate = new Date(weekEndingDate);
-              calcDate.setDate(weekEndingDate.getDate() + dayOffsets[day]);
-              validDates.push(calcDate);
-            }
-          });
+          const validDates = daysToCheck
+            .filter(day => isCheckboxChecked(doc, day))
+            .map(day => {
+              const dt = new Date(weekEndingDt);
+              dt.setDate(weekEndingDt.getDate() + DAY_OFFSETS[day]);
+              return dt;
+            })
+            .sort((a, b) => a - b);
 
           if (validDates.length > 0) {
-            validDates.sort((a,b) => a - b);
             const first = validDates[0];
             const last = validDates[validDates.length - 1];
             const m1 = first.getMonth() + 1, d1 = first.getDate(), y1 = first.getFullYear();

@@ -234,6 +234,48 @@
 
       return '';
     }
+    function parseLocalDate(dStr) {
+      if (!dStr) return null;
+      const str = String(dStr).replace(/\u00a0/g, ' ').trim();
+      const isoM = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+      if (isoM) {
+        return new Date(parseInt(isoM[1], 10), parseInt(isoM[2], 10) - 1, parseInt(isoM[3], 10));
+      }
+      const usM = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+      if (usM) {
+        let yr = usM[3];
+        if (yr.length === 2) yr = '20' + yr;
+        return new Date(parseInt(yr, 10), parseInt(usM[1], 10) - 1, parseInt(usM[2], 10));
+      }
+      const monthsMap = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+      const ddmmyyyy = str.match(/^(\d{1,2})[-/\s]+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/\s]+(\d{2,4})$/i);
+      if (ddmmyyyy) {
+        let yr = ddmmyyyy[3];
+        if (yr.length === 2) yr = '20' + yr;
+        const m = monthsMap[ddmmyyyy[2].toLowerCase()];
+        if (m !== undefined) return new Date(parseInt(yr, 10), m, parseInt(ddmmyyyy[1], 10));
+      }
+      const d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        if (str.includes('T') || str.includes('Z') || /^\d{4}-\d{2}-\d{2}$/.test(str)) {
+          return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+        }
+        return d;
+      }
+      return null;
+    }
+    function isCheckboxChecked(doc, day) {
+      const el = doc.querySelector(`#custrecord_crs_attendee_${day}_fs_inp, [id*="custrecord_crs_attendee_${day}_fs"], [id$="custrecord_crs_attendee_${day}_val"]`);
+      if (!el) return false;
+      if (el.checked) return true;
+      const cls = (el.className || '') + ' ' + (el.getAttribute('class') || '');
+      if (cls.includes('checkbox_ck') || cls.includes('checkbox_checked')) return true;
+      const txt = (el.innerText || el.textContent || el.value || '').trim().toLowerCase();
+      if (txt === 'yes' || txt === 't' || txt === 'true') return true;
+      const img = el.querySelector('img');
+      if (img && (img.src.includes('checkbox_ck') || img.alt.toLowerCase().includes('yes'))) return true;
+      return false;
+    }
     function extractAttendeeStatus(doc) {
       const VALID = ['Scheduled', 'Confirmed', 'Schedule Change', 'No Show'];
       const STATUS_MAP = { '1': 'Scheduled', '2': 'Confirmed', '4': 'No Show', '5': 'Schedule Change' };
@@ -1057,11 +1099,9 @@
             if (exactStatus) rec.status = exactStatus;
 
             // 2. Read Week-Ending Date
-            let weekEndingDate = null;
-            const weekEndingEl = recDoc.querySelector('#custrecord_crs_attendee_week_ending_display');
-            if (weekEndingEl && weekEndingEl.value) {
-              weekEndingDate = new Date(weekEndingEl.value);
-            }
+            const weekEndingEl = recDoc.querySelector('#custrecord_crs_attendee_week_ending_display, #custrecord_crs_attendee_week_ending_val, [id$="custrecord_crs_attendee_week_ending_val"], [name="custrecord_crs_attendee_week_ending"]');
+            const rawWeekVal = weekEndingEl ? (weekEndingEl.value || weekEndingEl.innerText || weekEndingEl.textContent || '').trim() : '';
+            const weekEndingDate = parseLocalDate(rawWeekVal);
 
             // 3. Date Math
             if (weekEndingDate && !isNaN(weekEndingDate.getTime())) {
@@ -1070,8 +1110,7 @@
               const validDates = [];
 
               daysToCheck.forEach(day => {
-                const checkbox = recDoc.querySelector(`#custrecord_crs_attendee_${day}_fs_inp`);
-                if (checkbox && checkbox.checked) {
+                if (isCheckboxChecked(recDoc, day)) {
                   const calcDate = new Date(weekEndingDate);
                   calcDate.setDate(weekEndingDate.getDate() + dayOffsets[day]);
                   validDates.push(calcDate);
@@ -1117,11 +1156,9 @@
         // ==== EXACT DOM EXTRACTION FOR COURSE ATTENDEES (INSPECTOR PANEL) ====
         const exactStatus = extractAttendeeStatus(doc);
 
-        let weekEndingDate = null;
-        const weekEndingEl = doc.querySelector('#custrecord_crs_attendee_week_ending_display');
-        if (weekEndingEl && weekEndingEl.value) {
-          weekEndingDate = new Date(weekEndingEl.value);
-        }
+        const weekEndingEl = doc.querySelector('#custrecord_crs_attendee_week_ending_display, #custrecord_crs_attendee_week_ending_val, [id$="custrecord_crs_attendee_week_ending_val"], [name="custrecord_crs_attendee_week_ending"]');
+        const rawWeekVal = weekEndingEl ? (weekEndingEl.value || weekEndingEl.innerText || weekEndingEl.textContent || '').trim() : '';
+        const weekEndingDate = parseLocalDate(rawWeekVal);
 
         if (weekEndingDate && !isNaN(weekEndingDate.getTime())) {
           const dayOffsets = { 'tue': -8, 'wed': -7, 'thu': -6, 'fri': -5, 'sat': -4 };
@@ -1129,8 +1166,7 @@
           const validDates = [];
 
           daysToCheck.forEach(day => {
-            const checkbox = doc.querySelector(`#custrecord_crs_attendee_${day}_fs_inp`);
-            if (checkbox && checkbox.checked) {
+            if (isCheckboxChecked(doc, day)) {
               const calcDate = new Date(weekEndingDate);
               calcDate.setDate(weekEndingDate.getDate() + dayOffsets[day]);
               validDates.push(calcDate);

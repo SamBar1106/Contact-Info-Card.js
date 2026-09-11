@@ -1,4 +1,70 @@
 (function(){
+  const WIN_NAME = 'NSSchedulerInspectorAppWindow';
+
+  /* Retrieve saved window geometry from localStorage with safe screen fallbacks */
+  let savedGeom = null;
+  try {
+    savedGeom = JSON.parse(localStorage.getItem('ns_inspector_geom') || 'null');
+  } catch (e) {}
+
+  const defaultWidth = 490;
+  const defaultHeight = Math.min(window.screen.availHeight - 60, 940);
+  const defaultLeft = Math.max(20, window.screen.availWidth - defaultWidth - 25);
+  const defaultTop = 30;
+
+  const winWidth = (savedGeom && savedGeom.width >= 350) ? savedGeom.width : defaultWidth;
+  const winHeight = (savedGeom && savedGeom.height >= 400) ? savedGeom.height : defaultHeight;
+  
+  const leftPos = (savedGeom && typeof savedGeom.left === 'number')
+    ? Math.max(10, Math.min(savedGeom.left, window.screen.availWidth - 120))
+    : defaultLeft;
+  const topPos = (savedGeom && typeof savedGeom.top === 'number')
+    ? Math.max(10, Math.min(savedGeom.top, window.screen.availHeight - 120))
+    : defaultTop;
+
+  const winFeatures = 'popup=1,width=' + winWidth + ',height=' + winHeight + ',left=' + leftPos + ',top=' + topPos + ',menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no';
+
+  let popup = window.open('', WIN_NAME, winFeatures);
+  if (!popup) {
+    alert('Pop-up Blocked by Chrome!\n\n1. Click the lock/tune icon in the address bar.\n2. Set "Pop-ups and redirects" to Allow.\n3. Click this bookmark again.');
+    return;
+  }
+
+  try { popup.opener = window; } catch(e) {}
+  popup.focus();
+
+  if (popup.document && popup.document.getElementById('ns-main-app-container')) {
+    if (typeof popup.__nsRehookOpener === 'function') popup.__nsRehookOpener(window);
+    return;
+  }
+
+  const doc = popup.document;
+  doc.open();
+  doc.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>NetSuite Inspector</title></head><body style="margin:0;padding:0;background:rgb(18,18,20);overflow:hidden;width:100vw;height:100vh;user-select:text;-webkit-user-select:text;"></body></html>');
+  doc.close();
+
+  function runInspectorApp() {
+    const UI_ID = 'ns-main-app-container';
+    const cache = {
+      contacts: new Map(),
+      clients: new Map(),
+      clientContacts: new Map(),
+      eventAttendance: new Map(),
+      contactSchedules: new Map(),
+      weekHeaders: new WeakMap()
+    };
+
+    let activeClientInternalId = null;
+    let activeClientName = '';
+    let activeContactId = null;
+    let activeContactName = '';
+    let activePdfUrl = '';
+    let activeAttendeeId = null;
+    let seminarPipWin = null;
+    let pdfPipWin = null;
+    let outlookWindow = null;
+    let cachedMatchingSeminars = null;
+
     function getNsOrigin() {
       try {
         if (window.opener && window.opener.location && window.opener.location.origin && window.opener.location.origin !== 'null') {
@@ -1322,6 +1388,175 @@
         console.error('Attendee resolution error:', err);
       }
     }
+
+    
+    /* Absolute URL Resolver for Cross-Window & PiP Navigation */
+
+
+
+    /* Geometry Memory: Track and save window position and size */
+    let lastSavedGeom = '';
+
+    window.addEventListener('resize', saveWindowGeometry);
+    window.addEventListener('beforeunload', saveWindowGeometry);
+    window.addEventListener('pagehide', saveWindowGeometry);
+    setInterval(saveWindowGeometry, 1500);
+
+    /* Text-Only Highlighter Styles */
+
+    /* Name-Only Highlighter */
+
+    window.addEventListener('pagehide', () => {
+      try {
+        const oWin = window.opener;
+        if (oWin && !oWin.closed) {
+          if (oWin.__nsInspectorActiveHandler === onBoardClick) {
+            oWin.__nsInspectorActiveHandler = null;
+          }
+          const oDoc = oWin.document;
+          if (oDoc) {
+            oDoc.querySelectorAll('.ns-inspector-active-highlight').forEach(node => {
+              node.classList.remove('ns-inspector-active-highlight');
+              node.style.removeProperty('background-color');
+              node.style.removeProperty('color');
+              node.style.removeProperty('padding');
+              node.style.removeProperty('border-radius');
+              node.style.removeProperty('display');
+              node.style.removeProperty('box-decoration-break');
+              node.style.removeProperty('-webkit-box-decoration-break');
+              node.style.removeProperty('box-shadow');
+              node.style.removeProperty('outline');
+              node.style.removeProperty('outline-offset');
+              node.style.removeProperty('transform');
+            });
+          }
+        }
+      } catch (e) {}
+    });
+
+    /* PDF.js Dynamic Loader */
+
+    /* PDF Text Layer Extractor */
+
+    /* Universal Date Normalizer */
+
+    /* Extract Attendee Status from a fetched NetSuite record page (edit OR view mode) */
+
+    /* Extract Date Substring and ISO from Line */
+
+    /* Relationships Subtab Full Contact Discovery with Pagination */
+
+    /* Comprehensive Contact Page Attendance/Scheduling (custom26) Machine Parser */
+
+    const style = document.createElement('style');
+    style.textContent = `
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; padding: 0; width: 100%; height: 100%;
+        overflow: hidden; background: rgb(18, 18, 20);
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+        font-size: 13px; color: rgb(244, 244, 245);
+        user-select: text !important;
+        -webkit-user-select: text !important;
+      }
+      ::-webkit-scrollbar { width: 5px; height: 5px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 999px; }
+
+      .nav-bar {
+        display: flex; background: rgba(24, 24, 27, 0.98);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        padding: 8px 12px; align-items: center; justify-content: space-between; flex-shrink: 0;
+        user-select: none; -webkit-user-select: none;
+      }
+      .app-title { font-weight: 700; font-size: 13px; color: white; display: flex; align-items: center; gap: 8px; user-select: none; -webkit-user-select: none; }
+
+      .content-viewport { width: 100%; height: calc(100% - 46px); overflow: hidden; position: relative; }
+      .view-pane { width: 100%; height: 100%; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+      .pill {
+        display: inline-block; padding: 2px 7px; border-radius: 999px;
+        font-size: 10px; font-weight: 700; text-transform: uppercase;
+        background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18);
+        color: rgb(228, 228, 231); letter-spacing: 0.5px; white-space: nowrap;
+        user-select: none; -webkit-user-select: none;
+      }
+
+      .btn {
+        padding: 7px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 12px;
+        display: inline-flex; align-items: center; justify-content: center; text-decoration: none;
+        transition: all 0.2s ease; border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.08); color: rgb(250, 250, 250);
+        user-select: none; -webkit-user-select: none;
+      }
+      .btn:hover { background: rgba(255, 255, 255, 0.14); }
+      .btn-solid { background: linear-gradient(180deg, white 0%, rgb(228, 228, 231) 100%); color: rgb(9, 9, 11); border: 1px solid white; font-weight: 700; }
+      .btn-solid:hover { background: rgb(212, 212, 216); }
+
+      .glass-card {
+        background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px; padding: 10px 12px;
+        user-select: text !important; -webkit-user-select: text !important;
+      }
+      .card-contact { border-left: 3px solid rgb(129, 140, 248); }
+      .title-contact { color: rgb(129, 140, 248) !important; }
+      .card-client { border-left: 3px solid rgb(56, 189, 248); }
+      .title-client { color: rgb(56, 189, 248) !important; }
+      .card-schedule { border-left: 3px solid rgb(251, 191, 36); }
+      .title-schedule { color: rgb(251, 191, 36) !important; }
+      .card-notes { border-left: 3px solid rgb(52, 211, 153); }
+      .title-notes { color: rgb(52, 211, 153) !important; }
+
+      .field-label {
+        font-size: 10px; text-transform: uppercase; font-weight: 700;
+        color: rgb(161, 161, 170); letter-spacing: 0.6px; margin-bottom: 2px;
+        user-select: text !important; -webkit-user-select: text !important;
+      }
+      .field-value {
+        font-size: 12px; color: rgb(250, 250, 250); font-weight: 500; word-break: break-word;
+        user-select: text !important; -webkit-user-select: text !important; cursor: text;
+      }
+      .field-value a { color: rgb(250, 250, 250); text-decoration: none; cursor: pointer; }
+      .field-value a:hover { color: rgb(56, 189, 248); }
+
+      input[type="text"], textarea {
+        width: 100%; background: rgba(9, 9, 11, 0.65); border: 1px solid rgba(255, 255, 255, 0.14);
+        color: rgb(250, 250, 250); padding: 7px 11px; border-radius: 8px; font-size: 12px; outline: none;
+        user-select: text !important; -webkit-user-select: text !important;
+      }
+      .search-results {
+        max-height: 130px; overflow-y: auto; background: rgba(18, 18, 20, 0.96);
+        border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 10px; display: none; margin-top: 4px;
+      }
+      .search-item { padding: 7px 12px; cursor: pointer; border-bottom: 1px solid rgba(255, 255, 255, 0.06); font-size: 11px; color: rgb(228, 228, 231); }
+      .search-item:hover { background: rgba(255, 255, 255, 0.12); color: white; }
+
+      .scroll-box {
+        font-size: 11px; color: rgb(212, 212, 216); max-height: 52px; overflow-y: auto;
+        background: rgba(9, 9, 11, 0.5); padding: 6px 8px; border-radius: 6px; white-space: pre-wrap;
+        user-select: text !important; -webkit-user-select: text !important; cursor: text;
+      }
+      .notes-container {
+        max-height: 155px; overflow-y: auto; background: rgba(9, 9, 11, 0.5);
+        padding: 8px 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;
+        user-select: text !important; -webkit-user-select: text !important;
+      }
+      .note-item {
+        border-left: 2px solid rgb(52, 211, 153); padding-left: 8px;
+        user-select: text !important; -webkit-user-select: text !important;
+      }
+      .note-header { font-size: 11px; color: rgb(161, 161, 170); display: flex; justify-content: space-between; margin-bottom: 3px; }
+      .note-author { font-weight: 700; color: rgb(250, 250, 250); user-select: text !important; -webkit-user-select: text !important; }
+      .note-body {
+        font-size: 13px; color: rgb(244, 244, 245); white-space: pre-wrap; word-break: break-word;
+        user-select: text !important; -webkit-user-select: text !important; cursor: text;
+      }
+    `;
+    document.head.appendChild(style);
+
+    const appContainer = document.createElement('div');
+    appContainer.id = UI_ID;
+    appContainer.style.cssText = 'display:flex; flex-direction:column; width:100%; height:100%; overflow:hidden; position:relative;';
     function saveWindowGeometry() {
       try {
         const w = window.outerWidth || window.innerWidth;
@@ -2252,239 +2487,7 @@
         }
       }
     }
-  const WIN_NAME = 'NSSchedulerInspectorAppWindow';
 
-  /* Retrieve saved window geometry from localStorage with safe screen fallbacks */
-  let savedGeom = null;
-  try {
-    savedGeom = JSON.parse(localStorage.getItem('ns_inspector_geom') || 'null');
-  } catch (e) {}
-
-  const defaultWidth = 490;
-  const defaultHeight = Math.min(window.screen.availHeight - 60, 940);
-  const defaultLeft = Math.max(20, window.screen.availWidth - defaultWidth - 25);
-  const defaultTop = 30;
-
-  const winWidth = (savedGeom && savedGeom.width >= 350) ? savedGeom.width : defaultWidth;
-  const winHeight = (savedGeom && savedGeom.height >= 400) ? savedGeom.height : defaultHeight;
-  
-  const leftPos = (savedGeom && typeof savedGeom.left === 'number')
-    ? Math.max(10, Math.min(savedGeom.left, window.screen.availWidth - 120))
-    : defaultLeft;
-  const topPos = (savedGeom && typeof savedGeom.top === 'number')
-    ? Math.max(10, Math.min(savedGeom.top, window.screen.availHeight - 120))
-    : defaultTop;
-
-  const winFeatures = 'popup=1,width=' + winWidth + ',height=' + winHeight + ',left=' + leftPos + ',top=' + topPos + ',menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no';
-
-  let popup = window.open('', WIN_NAME, winFeatures);
-  if (!popup) {
-    alert('Pop-up Blocked by Chrome!\n\n1. Click the lock/tune icon in the address bar.\n2. Set "Pop-ups and redirects" to Allow.\n3. Click this bookmark again.');
-    return;
-  }
-
-  try { popup.opener = window; } catch(e) {}
-  popup.focus();
-
-  if (popup.document && popup.document.getElementById('ns-main-app-container')) {
-    if (typeof popup.__nsRehookOpener === 'function') popup.__nsRehookOpener(window);
-    return;
-  }
-
-  const doc = popup.document;
-  doc.open();
-  doc.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>NetSuite Inspector</title></head><body style="margin:0;padding:0;background:rgb(18,18,20);overflow:hidden;width:100vw;height:100vh;user-select:text;-webkit-user-select:text;"></body></html>');
-  doc.close();
-
-  function runInspectorApp() {
-    const UI_ID = 'ns-main-app-container';
-    const cache = {
-      contacts: new Map(),
-      clients: new Map(),
-      clientContacts: new Map(),
-      eventAttendance: new Map(),
-      contactSchedules: new Map(),
-      weekHeaders: new WeakMap()
-    };
-
-    let activeClientInternalId = null;
-    let activeClientName = '';
-    let activeContactId = null;
-    let activeContactName = '';
-    let activePdfUrl = '';
-    let activeAttendeeId = null;
-    let seminarPipWin = null;
-    let pdfPipWin = null;
-    let outlookWindow = null;
-    let cachedMatchingSeminars = null;
-
-    /* Absolute URL Resolver for Cross-Window & PiP Navigation */
-
-
-
-    /* Geometry Memory: Track and save window position and size */
-    let lastSavedGeom = '';
-
-    window.addEventListener('resize', saveWindowGeometry);
-    window.addEventListener('beforeunload', saveWindowGeometry);
-    window.addEventListener('pagehide', saveWindowGeometry);
-    setInterval(saveWindowGeometry, 1500);
-
-    /* Text-Only Highlighter Styles */
-
-    /* Name-Only Highlighter */
-
-    window.addEventListener('pagehide', () => {
-      try {
-        const oWin = window.opener;
-        if (oWin && !oWin.closed) {
-          if (oWin.__nsInspectorActiveHandler === onBoardClick) {
-            oWin.__nsInspectorActiveHandler = null;
-          }
-          const oDoc = oWin.document;
-          if (oDoc) {
-            oDoc.querySelectorAll('.ns-inspector-active-highlight').forEach(node => {
-              node.classList.remove('ns-inspector-active-highlight');
-              node.style.removeProperty('background-color');
-              node.style.removeProperty('color');
-              node.style.removeProperty('padding');
-              node.style.removeProperty('border-radius');
-              node.style.removeProperty('display');
-              node.style.removeProperty('box-decoration-break');
-              node.style.removeProperty('-webkit-box-decoration-break');
-              node.style.removeProperty('box-shadow');
-              node.style.removeProperty('outline');
-              node.style.removeProperty('outline-offset');
-              node.style.removeProperty('transform');
-            });
-          }
-        }
-      } catch (e) {}
-    });
-
-    /* PDF.js Dynamic Loader */
-
-    /* PDF Text Layer Extractor */
-
-    /* Universal Date Normalizer */
-
-    /* Extract Attendee Status from a fetched NetSuite record page (edit OR view mode) */
-
-    /* Extract Date Substring and ISO from Line */
-
-    /* Relationships Subtab Full Contact Discovery with Pagination */
-
-    /* Comprehensive Contact Page Attendance/Scheduling (custom26) Machine Parser */
-
-    const style = document.createElement('style');
-    style.textContent = `
-      * { box-sizing: border-box; }
-      html, body {
-        margin: 0; padding: 0; width: 100%; height: 100%;
-        overflow: hidden; background: rgb(18, 18, 20);
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-        font-size: 13px; color: rgb(244, 244, 245);
-        user-select: text !important;
-        -webkit-user-select: text !important;
-      }
-      ::-webkit-scrollbar { width: 5px; height: 5px; }
-      ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 999px; }
-
-      .nav-bar {
-        display: flex; background: rgba(24, 24, 27, 0.98);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-        padding: 8px 12px; align-items: center; justify-content: space-between; flex-shrink: 0;
-        user-select: none; -webkit-user-select: none;
-      }
-      .app-title { font-weight: 700; font-size: 13px; color: white; display: flex; align-items: center; gap: 8px; user-select: none; -webkit-user-select: none; }
-
-      .content-viewport { width: 100%; height: calc(100% - 46px); overflow: hidden; position: relative; }
-      .view-pane { width: 100%; height: 100%; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-
-      .pill {
-        display: inline-block; padding: 2px 7px; border-radius: 999px;
-        font-size: 10px; font-weight: 700; text-transform: uppercase;
-        background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18);
-        color: rgb(228, 228, 231); letter-spacing: 0.5px; white-space: nowrap;
-        user-select: none; -webkit-user-select: none;
-      }
-
-      .btn {
-        padding: 7px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 12px;
-        display: inline-flex; align-items: center; justify-content: center; text-decoration: none;
-        transition: all 0.2s ease; border: 1px solid rgba(255, 255, 255, 0.18);
-        background: rgba(255, 255, 255, 0.08); color: rgb(250, 250, 250);
-        user-select: none; -webkit-user-select: none;
-      }
-      .btn:hover { background: rgba(255, 255, 255, 0.14); }
-      .btn-solid { background: linear-gradient(180deg, white 0%, rgb(228, 228, 231) 100%); color: rgb(9, 9, 11); border: 1px solid white; font-weight: 700; }
-      .btn-solid:hover { background: rgb(212, 212, 216); }
-
-      .glass-card {
-        background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px; padding: 10px 12px;
-        user-select: text !important; -webkit-user-select: text !important;
-      }
-      .card-contact { border-left: 3px solid rgb(129, 140, 248); }
-      .title-contact { color: rgb(129, 140, 248) !important; }
-      .card-client { border-left: 3px solid rgb(56, 189, 248); }
-      .title-client { color: rgb(56, 189, 248) !important; }
-      .card-schedule { border-left: 3px solid rgb(251, 191, 36); }
-      .title-schedule { color: rgb(251, 191, 36) !important; }
-      .card-notes { border-left: 3px solid rgb(52, 211, 153); }
-      .title-notes { color: rgb(52, 211, 153) !important; }
-
-      .field-label {
-        font-size: 10px; text-transform: uppercase; font-weight: 700;
-        color: rgb(161, 161, 170); letter-spacing: 0.6px; margin-bottom: 2px;
-        user-select: text !important; -webkit-user-select: text !important;
-      }
-      .field-value {
-        font-size: 12px; color: rgb(250, 250, 250); font-weight: 500; word-break: break-word;
-        user-select: text !important; -webkit-user-select: text !important; cursor: text;
-      }
-      .field-value a { color: rgb(250, 250, 250); text-decoration: none; cursor: pointer; }
-      .field-value a:hover { color: rgb(56, 189, 248); }
-
-      input[type="text"], textarea {
-        width: 100%; background: rgba(9, 9, 11, 0.65); border: 1px solid rgba(255, 255, 255, 0.14);
-        color: rgb(250, 250, 250); padding: 7px 11px; border-radius: 8px; font-size: 12px; outline: none;
-        user-select: text !important; -webkit-user-select: text !important;
-      }
-      .search-results {
-        max-height: 130px; overflow-y: auto; background: rgba(18, 18, 20, 0.96);
-        border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 10px; display: none; margin-top: 4px;
-      }
-      .search-item { padding: 7px 12px; cursor: pointer; border-bottom: 1px solid rgba(255, 255, 255, 0.06); font-size: 11px; color: rgb(228, 228, 231); }
-      .search-item:hover { background: rgba(255, 255, 255, 0.12); color: white; }
-
-      .scroll-box {
-        font-size: 11px; color: rgb(212, 212, 216); max-height: 52px; overflow-y: auto;
-        background: rgba(9, 9, 11, 0.5); padding: 6px 8px; border-radius: 6px; white-space: pre-wrap;
-        user-select: text !important; -webkit-user-select: text !important; cursor: text;
-      }
-      .notes-container {
-        max-height: 155px; overflow-y: auto; background: rgba(9, 9, 11, 0.5);
-        padding: 8px 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;
-        user-select: text !important; -webkit-user-select: text !important;
-      }
-      .note-item {
-        border-left: 2px solid rgb(52, 211, 153); padding-left: 8px;
-        user-select: text !important; -webkit-user-select: text !important;
-      }
-      .note-header { font-size: 11px; color: rgb(161, 161, 170); display: flex; justify-content: space-between; margin-bottom: 3px; }
-      .note-author { font-weight: 700; color: rgb(250, 250, 250); user-select: text !important; -webkit-user-select: text !important; }
-      .note-body {
-        font-size: 13px; color: rgb(244, 244, 245); white-space: pre-wrap; word-break: break-word;
-        user-select: text !important; -webkit-user-select: text !important; cursor: text;
-      }
-    `;
-    document.head.appendChild(style);
-
-    const appContainer = document.createElement('div');
-    appContainer.id = UI_ID;
-    appContainer.style.cssText = 'display:flex; flex-direction:column; width:100%; height:100%; overflow:hidden; position:relative;';
     document.body.appendChild(appContainer);
 
     const seminarPill = document.getElementById('ns-seminar-pip-pill');

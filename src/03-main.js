@@ -64,6 +64,8 @@
     let outlookWindow = null;
     let cachedMatchingSeminars = null;
 
+    // INJECT_API_HERE
+    
     /* Absolute URL Resolver for Cross-Window & PiP Navigation */
 
 
@@ -231,6 +233,7 @@
     const appContainer = document.createElement('div');
     appContainer.id = UI_ID;
     appContainer.style.cssText = 'display:flex; flex-direction:column; width:100%; height:100%; overflow:hidden; position:relative;';
+    // INJECT_UI_HERE
     document.body.appendChild(appContainer);
 
     const seminarPill = document.getElementById('ns-seminar-pip-pill');

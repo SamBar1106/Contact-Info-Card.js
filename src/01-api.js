@@ -119,7 +119,7 @@ function getNsOrigin() {
         return `${isoM[1]}-${String(isoM[2]).padStart(2, '0')}-${String(isoM[3]).padStart(2, '0')}`;
       }
 
-      // 3. DD-Mon-YYYY (supports hyphens, spaces, or slashes: "16-Sep-2026", "16 Sep 2026", "16/Sep/2026")
+      // 3. DD-Mon-YYYY
       const monthsMap = { jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
       const ddmmyyyy = s.match(/\b(\d{1,2})[\s\-\/]+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\-\/]+(\d{2,4})\b/i);
       if (ddmmyyyy) {
@@ -213,31 +213,25 @@ function getNsOrigin() {
       const VALID = ['Scheduled', 'Confirmed', 'Schedule Change', 'No Show'];
       const STATUS_MAP = { '1': 'Scheduled', '2': 'Confirmed', '4': 'No Show', '5': 'Schedule Change' };
 
-      // --- EDIT MODE: hidden numeric input (most reliable when present) ---
       const hddn = Array.from(doc.querySelectorAll('input[id^="hddn_custrecord_crs_attendee_status"]'))
                         .find(el => !el.id.includes('orig') && !el.id.includes('req') && !el.id.includes('changed'));
       if (hddn && hddn.value && STATUS_MAP[hddn.value.trim()]) return STATUS_MAP[hddn.value.trim()];
 
-      // --- EDIT MODE: visible text input ---
       const inpt = doc.querySelector('input[name="inpt_custrecord_crs_attendee_status"]');
       if (inpt && VALID.includes(inpt.value.trim())) return inpt.value.trim();
 
-      // --- EDIT MODE: select element ---
       const sel = doc.querySelector('select[name="custrecord_crs_attendee_status"]');
       if (sel && sel.selectedIndex >= 0) {
         const selText = sel.options[sel.selectedIndex]?.text?.trim();
         if (VALID.includes(selText)) return selText;
       }
 
-      // --- VIEW MODE: span with _val id ---
       const valSpan = doc.querySelector('[id$="custrecord_crs_attendee_status_val"]');
       if (valSpan) {
         const t = (valSpan.innerText || valSpan.textContent || '').trim();
         if (VALID.includes(t)) return t;
       }
 
-      // --- VIEW MODE: find "Status" label cell and read its sibling value cell ---
-      // NetSuite renders view-mode fields as <td class="labelcell">Status</td><td class="datacell">Confirmed</td>
       const allTds = Array.from(doc.querySelectorAll('td'));
       for (const td of allTds) {
         const label = (td.innerText || td.textContent || '').replace(/\s+/g, ' ').trim();
@@ -253,7 +247,6 @@ function getNsOrigin() {
       return '';
     }
     function extractDateFromLine(line) {
-
       if (!line) return null;
 
       const rangeM = line.match(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\s*(?:-|to|–)\s*\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/i);
@@ -424,7 +417,6 @@ function getNsOrigin() {
         const mainDoc = new DOMParser().parseFromString(html, 'text/html');
         const allDocs = [mainDoc];
 
-        // Fetch submachine tabs if not rendered in primary DOM view
         const extraFetches = [];
         if (!html.includes('rectype=54') && !html.includes('recmachcustrecord_mge_event_contact')) {
           extraFetches.push(
@@ -480,7 +472,6 @@ function getNsOrigin() {
             let rawDate = '';
             let title = '';
 
-            // 1. Analyze table headers to find specific Week Ending and Day columns
             const tbl = row.closest('table');
             const headerRow = tbl ? tbl.querySelector('tr.uir-list-header-tr, tr:has(.listheader), tr:has(th)') : null;
             const attendedDays = [];
@@ -504,15 +495,12 @@ function getNsOrigin() {
               });
             }
 
-            // Lock in week ending date first if the column exists
             if (weekEndingColIdx >= 0 && cells[weekEndingColIdx]) {
               const t = (cells[weekEndingColIdx].innerText || cells[weekEndingColIdx].textContent || '').trim();
               const dM = extractDateFromLine(t);
               if (dM) rawDate = dM.rawDate;
             }
 
-            // 2. DYNAMIC MUTUALLY EXCLUSIVE SCANNER
-            // This loops through the cells and guarantees Date and Status will NEVER overwrite each other
             for (const c of cells) {
               if (c.contains(a)) continue;
               const text = (c.innerText || c.textContent || '').replace(/\s+/g, ' ').trim();
@@ -533,7 +521,10 @@ function getNsOrigin() {
               }
             }
 
-            // 3. Process Dates
+            // ONLY ALLOW SCHEDULED OR CONFIRMED
+            let finalStatus = status || 'Scheduled';
+            if (!/^(Scheduled|Confirmed)$/i.test(finalStatus)) return; // Filters out No Show, Cancelled, Schedule Change
+
             let finalDateStr = rawDate;
             let finalIso = normalizeDate(rawDate);
 
@@ -577,7 +568,7 @@ function getNsOrigin() {
                 title: title || defaultType,
                 rawDate: finalDateStr || rawDate,
                 iso: finalIso,
-                status: status || 'Scheduled',
+                status: finalStatus,
                 editUrl,
                 attendedDays
               });
@@ -825,7 +816,6 @@ function getNsOrigin() {
         resolvedCompany = (fieldVal && !/dashboard|customer 360|list view|search/i.test(fieldVal)) ? fieldVal : (fallbackBoardName || 'Client Master');
       }
 
-      // NEW: Extract .uir-record-id from the client page and use it if it exists
       const uirRecordId = (doc.querySelector('.uir-record-id')?.innerText || '').trim();
       if (uirRecordId) {
         resolvedCompany = uirRecordId;
@@ -1000,6 +990,10 @@ function getNsOrigin() {
             }
           });
 
+          // ONLY ALLOW SCHEDULED OR CONFIRMED
+          let finalStatus = attendanceStatus || 'Scheduled';
+          if (!/^(Scheduled|Confirmed)$/i.test(finalStatus)) return;
+
           if ((attendanceDate || seminarTitle) && (seminarTitle || attendanceStatus || rowEditUrl)) {
             const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}`;
             if (!results.some(r => r.compoundKey === compoundKey)) {
@@ -1009,7 +1003,7 @@ function getNsOrigin() {
                 eventTitle: seminarTitle, 
                 date: attendanceDate, 
                 rawDate: attendanceDate,
-                status: attendanceStatus || 'Scheduled', 
+                status: finalStatus, 
                 editUrl: rowEditUrl,
                 compoundKey 
               });
@@ -1018,7 +1012,6 @@ function getNsOrigin() {
         });
       });
       
-      // ==== EXACT DOM EXTRACTION FOR CLIENT ATTENDANCE ====
       for (const rec of results) {
         if (rec.editUrl && rec.editUrl.includes('rectype=56')) {
           try {
@@ -1030,12 +1023,10 @@ function getNsOrigin() {
             const exactStatus = extractAttendeeStatus(recDoc);
             if (exactStatus) rec.status = exactStatus;
 
-            // 2. Read Week-Ending Date
             const weekEndingEl = recDoc.querySelector('#custrecord_crs_attendee_week_ending_display, #custrecord_crs_attendee_week_ending_val, [id$="custrecord_crs_attendee_week_ending_val"], [name="custrecord_crs_attendee_week_ending"]');
             const rawWeekVal = weekEndingEl ? (weekEndingEl.value || weekEndingEl.innerText || weekEndingEl.textContent || '').trim() : '';
             const weekEndingIso = normalizeDate(rawWeekVal);
 
-            // 3. Date Math
             if (weekEndingIso) {
               const DAY_OFFSETS = { tue: -8, wed: -7, thu: -6, fri: -5, sat: -4 };
               const daysToCheck = ['tue', 'wed', 'thu', 'fri', 'sat'];
@@ -1076,8 +1067,10 @@ function getNsOrigin() {
         }
       }
 
-      cache.eventAttendance.set(clientId, results);
-      return results;
+      // Final strict filter right before saving to cache just to be absolutely certain
+      const finalFilteredResults = results.filter(r => /^(Scheduled|Confirmed)$/i.test(r.status));
+      cache.eventAttendance.set(clientId, finalFilteredResults);
+      return finalFilteredResults;
     }
     async function fetchAttendeeRecord(attendee) {
       const attendeeId = attendee.id;
@@ -1086,7 +1079,6 @@ function getNsOrigin() {
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
 
-        // ==== EXACT DOM EXTRACTION FOR COURSE ATTENDEES (INSPECTOR PANEL) ====
         const exactStatus = extractAttendeeStatus(doc);
 
         const weekEndingEl = doc.querySelector('#custrecord_crs_attendee_week_ending_display, #custrecord_crs_attendee_week_ending_val, [id$="custrecord_crs_attendee_week_ending_val"], [name="custrecord_crs_attendee_week_ending"]');
@@ -1133,7 +1125,6 @@ function getNsOrigin() {
             document.getElementById('ns-insp-sched-day').innerHTML = `${textOnlyDates}<div style="margin-top:4px;">${getStatusBadge(exactStatus)}</div>`;
           }
         }
-        // ==== END EXACT DOM EXTRACTION ====
 
         doc.querySelectorAll('header, nav, [id="ns-header"], [id="recent-records"], [id="header"], .uir-header, [id="div__nav"]').forEach(e => e.remove());
         const mainForm = doc.querySelector('form[name="main_form"], form[id="main_form"], [id="div__body"]') || doc.body;
@@ -1244,7 +1235,6 @@ function getNsOrigin() {
 
         if (clientInternalId) {
           getClientData(clientInternalId, clientDisplayText).then(clientData => {
-            // NEW: Update the display name with the fetched uir-record-id
             if (clientData.companyName) {
               document.getElementById('ns-insp-full-client').textContent = clientData.companyName;
             }
@@ -1275,7 +1265,8 @@ function getNsOrigin() {
               const isThisContact = (contactId && item.contactId === contactId) ||
                 (attendee.attendeeName && item.contactName.toLowerCase().includes(attendee.attendeeName.toLowerCase()));
               if (!isThisContact) return false;
-              if (item.status && /cancel/i.test(item.status)) return false;
+              // STRICTLY ENFORCE SCHEDULED/CONFIRMED HERE AS WELL
+              if (item.status && !/^(Scheduled|Confirmed)$/i.test(item.status)) return false;
               return isEventInOpenWeeks(item, openBoardInfo);
             });
 

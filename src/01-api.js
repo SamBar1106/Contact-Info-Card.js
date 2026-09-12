@@ -409,7 +409,7 @@ function getNsOrigin() {
       cache.clientContacts.set(clientId, list);
       return list;
     }
-    
+
     async function getContactSchedulingRecords(contactId) {
       if (!contactId) return [];
       if (cache.contactSchedules.has(contactId)) {
@@ -433,7 +433,7 @@ function getNsOrigin() {
         }
         if (!html.includes('rectype=56') && !html.includes('recmachcustrecord_crs_attendee_contact')) {
           extraFetches.push(
-            fetch(`/app/common/entity/contact.nl?id=${contactId}&selectedtab=custom26&q=recmachcustrecord_crs_attendee_contactrange&si=0&f=T&machine=recmachcustrecord_crs_attendee_contactrange`).then(r => r.text()).catch(() => '')
+            fetch(`/app/common/entity/contact.nl?id=${contactId}&selectedtab=custom26&q=recmachcustrecord_crs_attendee_contactrange&si=0&f=T&machine=recmachcustrecord_crs_attendee_contact`).then(r => r.text()).catch(() => '')
           );
         }
 
@@ -477,34 +477,10 @@ function getNsOrigin() {
 
             const VALID_STATUSES = ['Scheduled', 'Confirmed', 'Schedule Change', 'No Show'];
             let status = '';
-
-            // 1. EXACT TARGETING: Grab status directly from Cell 4 based on diagnostic
-            if (cells[4]) {
-              const c4Text = (cells[4].innerText || cells[4].textContent || '').trim();
-              status = VALID_STATUSES.find(s => s.toLowerCase() === c4Text.toLowerCase()) || '';
-            }
-            // 2. FALLBACK: Only scan other cells if Cell 4 was empty/invalid
-            if (!status) {
-              for (const c of cells) {
-                const t = (c.innerText || c.textContent || '').replace(/\s+/g, ' ').trim();
-                const match = VALID_STATUSES.find(s => s.toLowerCase() === t.toLowerCase());
-                if (match) {
-                  status = match;
-                  break;
-                }
-              }
-            }
-
+            let rawDate = '';
             let title = '';
-            for (const c of cells) {
-              if (c.contains(a)) continue;
-              const t = (c.innerText || c.textContent || '').replace(/\s+/g, ' ').trim();
-              if (t.length > 3 && !extractDateFromLine(t) && !/^(yes|no|none|edit|view)$/i.test(t) && !/\b(confirmed|scheduled|attended|completed|cancell?ed)\b/i.test(t)) {
-                title = t;
-                break;
-              }
-            }
 
+            // 1. Analyze table headers to find specific Week Ending and Day columns
             const tbl = row.closest('table');
             const headerRow = tbl ? tbl.querySelector('tr.uir-list-header-tr, tr:has(.listheader), tr:has(th)') : null;
             const attendedDays = [];
@@ -514,12 +490,10 @@ function getNsOrigin() {
               Array.from(headerRow.children).forEach((hCell, idx) => {
                 const hTxt = (hCell.innerText || hCell.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
-                // Track Week Ending column index
                 if (/week\s*end/i.test(hTxt) && weekEndingColIdx === -1) {
                   weekEndingColIdx = idx;
                 }
 
-                // Track checked day columns
                 const dm = hTxt.match(/\b(mon|tue|wed|thu|fri|sat)\b/i);
                 if (dm && cells[idx]) {
                   const v = (cells[idx].innerText || cells[idx].textContent || '').trim().toLowerCase();
@@ -530,29 +504,36 @@ function getNsOrigin() {
               });
             }
 
-            let rawDate = '';
-            
-            // 1. EXACT TARGETING: Grab date directly from Cell 7 based on diagnostic
-            if (cells[7]) {
-              const c7Text = (cells[7].innerText || cells[7].textContent || '').trim();
-              const dM = extractDateFromLine(c7Text);
-              if (dM) rawDate = dM.rawDate;
-            }
-            // 2. FALLBACK: Try the Week Ending header column
-            if (!rawDate && weekEndingColIdx >= 0 && cells[weekEndingColIdx]) {
+            // Lock in week ending date first if the column exists
+            if (weekEndingColIdx >= 0 && cells[weekEndingColIdx]) {
               const t = (cells[weekEndingColIdx].innerText || cells[weekEndingColIdx].textContent || '').trim();
               const dM = extractDateFromLine(t);
               if (dM) rawDate = dM.rawDate;
             }
-            // 3. LAST RESORT FALLBACK: Scan everything
-            if (!rawDate) {
-              for (const c of cells) {
-                const t = (c.innerText || c.textContent || '').trim();
-                const dM = extractDateFromLine(t);
-                if (dM) { rawDate = dM.rawDate; break; }
+
+            // 2. DYNAMIC MUTUALLY EXCLUSIVE SCANNER
+            // This loops through the cells and guarantees Date and Status will NEVER overwrite each other
+            for (const c of cells) {
+              if (c.contains(a)) continue;
+              const text = (c.innerText || c.textContent || '').replace(/\s+/g, ' ').trim();
+              
+              if (!text || /^(edit|view|remove)$/i.test(text)) continue;
+
+              const dInfo = extractDateFromLine(text);
+
+              if (!status && VALID_STATUSES.some(s => s.toLowerCase() === text.toLowerCase())) {
+                status = VALID_STATUSES.find(s => s.toLowerCase() === text.toLowerCase());
+              } else if (!rawDate && dInfo && text.length < 30) {
+                rawDate = dInfo.rawDate;
+              } else if (!title && text.length > 3) {
+                const isStatusWord = VALID_STATUSES.some(s => s.toLowerCase() === text.toLowerCase());
+                if (!isStatusWord && !/^\d+$/.test(text) && !/^(yes|no|none)$/i.test(text) && !dInfo) {
+                  title = text;
+                }
               }
             }
 
+            // 3. Process Dates
             let finalDateStr = rawDate;
             let finalIso = normalizeDate(rawDate);
 

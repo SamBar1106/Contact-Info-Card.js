@@ -467,7 +467,8 @@ function getNsOrigin() {
             const cells = Array.from(row.querySelectorAll('td'));
             if (!cells.length) return;
 
-            const VALID_STATUSES = ['Scheduled', 'Confirmed', 'Schedule Change', 'No Show'];
+            // EXPANDED LIST: Catch all unwanted statuses so they don't default to "Scheduled"
+            const VALID_STATUSES = ['Scheduled', 'Confirmed', 'Schedule Change', 'No Show', 'Cancelled', 'Canceled', 'Attended', 'Completed'];
             let status = '';
             let rawDate = '';
             let title = '';
@@ -521,9 +522,9 @@ function getNsOrigin() {
               }
             }
 
-            // ONLY ALLOW SCHEDULED OR CONFIRMED
+            // STRICT FILTER: Only allow Scheduled or Confirmed
             let finalStatus = status || 'Scheduled';
-            if (!/^(Scheduled|Confirmed)$/i.test(finalStatus)) return; // Filters out No Show, Cancelled, Schedule Change
+            if (!/^(Scheduled|Confirmed)$/i.test(finalStatus)) return; // Completely ignores everything else
 
             let finalDateStr = rawDate;
             let finalIso = normalizeDate(rawDate);
@@ -970,7 +971,8 @@ function getNsOrigin() {
           let attendanceStatus = '';
           let seminarTitle = '';
 
-          const VALID_STATUSES = ['Scheduled', 'Confirmed', 'Schedule Change', 'No Show'];
+          // EXPANDED LIST: Catch all unwanted statuses so they don't default to "Scheduled"
+          const VALID_STATUSES = ['Scheduled', 'Confirmed', 'Schedule Change', 'No Show', 'Cancelled', 'Canceled', 'Attended', 'Completed'];
 
           row.querySelectorAll('td').forEach(cell => {
             if (cell.contains(cLink)) return;
@@ -990,9 +992,9 @@ function getNsOrigin() {
             }
           });
 
-          // ONLY ALLOW SCHEDULED OR CONFIRMED
+          // STRICT FILTER: Only allow Scheduled or Confirmed
           let finalStatus = attendanceStatus || 'Scheduled';
-          if (!/^(Scheduled|Confirmed)$/i.test(finalStatus)) return;
+          if (!/^(Scheduled|Confirmed)$/i.test(finalStatus)) return; // Filters everything else out!
 
           if ((attendanceDate || seminarTitle) && (seminarTitle || attendanceStatus || rowEditUrl)) {
             const compoundKey = `${contactName}_${seminarTitle}_${attendanceDate}`;

@@ -186,9 +186,9 @@
         return `${isoM[1]}-${String(isoM[2]).padStart(2, '0')}-${String(isoM[3]).padStart(2, '0')}`;
       }
 
-      // 3. DD-Mon-YYYY
+      // 3. DD-Mon-YYYY (supports hyphens, spaces, or slashes: "16-Sep-2026", "16 Sep 2026", "16/Sep/2026")
       const monthsMap = { jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
-      const ddmmyyyy = s.match(/\b(\d{1,2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*-\d{2,4}\b/i);
+      const ddmmyyyy = s.match(/\b(\d{1,2})[\s\-\/]+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\-\/]+(\d{2,4})\b/i);
       if (ddmmyyyy) {
         let yr = ddmmyyyy[3];
         if (yr.length === 2) yr = '20' + yr;
@@ -335,7 +335,7 @@
         if (iso) return { rawDate: isoM[0], iso };
       }
 
-      const ddmonM = line.match(/\b\d{1,2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*-\d{2,4}\b/i);
+      const ddmonM = line.match(/\b\d{1,2}[\s\-\/]+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\-\/]+\d{2,4}\b/i);
       if (ddmonM) {
         const iso = normalizeDate(ddmonM[0]);
         if (iso) return { rawDate: ddmonM[0], iso };

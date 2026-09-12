@@ -1,4 +1,4 @@
-    function getNsOrigin() {
+function getNsOrigin() {
       try {
         if (window.opener && window.opener.location && window.opener.location.origin && window.opener.location.origin !== 'null') {
           return window.opener.location.origin;
@@ -409,6 +409,7 @@
       cache.clientContacts.set(clientId, list);
       return list;
     }
+    
     async function getContactSchedulingRecords(contactId) {
       if (!contactId) return [];
       if (cache.contactSchedules.has(contactId)) {
@@ -432,7 +433,7 @@
         }
         if (!html.includes('rectype=56') && !html.includes('recmachcustrecord_crs_attendee_contact')) {
           extraFetches.push(
-            fetch(`/app/common/entity/contact.nl?id=${contactId}&selectedtab=custom26&q=recmachcustrecord_crs_attendee_contactrange&si=0&f=T&machine=recmachcustrecord_crs_attendee_contact`).then(r => r.text()).catch(() => '')
+            fetch(`/app/common/entity/contact.nl?id=${contactId}&selectedtab=custom26&q=recmachcustrecord_crs_attendee_contactrange&si=0&f=T&machine=recmachcustrecord_crs_attendee_contactrange`).then(r => r.text()).catch(() => '')
           );
         }
 
@@ -476,11 +477,21 @@
 
             const VALID_STATUSES = ['Scheduled', 'Confirmed', 'Schedule Change', 'No Show'];
             let status = '';
-            for (const c of cells) {
-              const t = (c.innerText || c.textContent || '').replace(/\s+/g, ' ').trim();
-              if (VALID_STATUSES.some(s => s.toLowerCase() === t.toLowerCase())) {
-                status = VALID_STATUSES.find(s => s.toLowerCase() === t.toLowerCase());
-                break;
+
+            // 1. EXACT TARGETING: Grab status directly from Cell 4 based on diagnostic
+            if (cells[4]) {
+              const c4Text = (cells[4].innerText || cells[4].textContent || '').trim();
+              status = VALID_STATUSES.find(s => s.toLowerCase() === c4Text.toLowerCase()) || '';
+            }
+            // 2. FALLBACK: Only scan other cells if Cell 4 was empty/invalid
+            if (!status) {
+              for (const c of cells) {
+                const t = (c.innerText || c.textContent || '').replace(/\s+/g, ' ').trim();
+                const match = VALID_STATUSES.find(s => s.toLowerCase() === t.toLowerCase());
+                if (match) {
+                  status = match;
+                  break;
+                }
               }
             }
 
@@ -519,13 +530,21 @@
               });
             }
 
-            // Read Week Ending date: prefer the specific column, fall back to first date found in row
             let rawDate = '';
-            if (weekEndingColIdx >= 0 && cells[weekEndingColIdx]) {
+            
+            // 1. EXACT TARGETING: Grab date directly from Cell 7 based on diagnostic
+            if (cells[7]) {
+              const c7Text = (cells[7].innerText || cells[7].textContent || '').trim();
+              const dM = extractDateFromLine(c7Text);
+              if (dM) rawDate = dM.rawDate;
+            }
+            // 2. FALLBACK: Try the Week Ending header column
+            if (!rawDate && weekEndingColIdx >= 0 && cells[weekEndingColIdx]) {
               const t = (cells[weekEndingColIdx].innerText || cells[weekEndingColIdx].textContent || '').trim();
               const dM = extractDateFromLine(t);
               if (dM) rawDate = dM.rawDate;
             }
+            // 3. LAST RESORT FALLBACK: Scan everything
             if (!rawDate) {
               for (const c of cells) {
                 const t = (c.innerText || c.textContent || '').trim();
@@ -538,8 +557,6 @@
             let finalIso = normalizeDate(rawDate);
 
             if (finalIso && attendedDays.length > 0) {
-              // Week Ending is always a Wednesday. Session days are the PRIOR calendar week.
-              // Apply fixed backwards offsets from the Week Ending Wednesday.
               const DAY_OFFSETS = { tue: -8, wed: -7, thu: -6, fri: -5, sat: -4 };
               const p = finalIso.split('-').map(Number);
               const weekEndingDt = new Date(p[0], p[1] - 1, p[2]);
@@ -594,6 +611,7 @@
         return [];
       }
     }
+
     function getCanonicalKey(rawStr, rawDate = '') {
       if (!rawStr) return { isoDate: '', coreName: '' };
       let s = String(rawStr).replace(/\u00a0/g, ' ').toLowerCase();
